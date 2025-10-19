@@ -44,6 +44,7 @@ for epoch in range(500):
 # Analytical Target Function (for visualization)
 exact_solution = lambda x: torch.sin(2 * torch.pi * x)
 exact_derivative_solution = lambda x: 2 * torch.pi * torch.cos(2 * torch.pi * x)
+print(model.grid)
 
 # Visualization
 plot_fem_solution(model, u_exact=exact_solution, title="L² Projection of sin(2πx)")

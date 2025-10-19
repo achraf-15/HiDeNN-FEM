@@ -85,3 +85,66 @@ def plot_fem_derivative(model, u_exact=None, title="FEM Derivative du/dx"):
     plt.legend()
     plt.grid(True)
     plt.show()
+
+
+def plot_2d_solution(model, u_exact=None, n_eval=100):
+    device = model.u.device
+    grid_x, grid_y = model.grid
+
+    X = torch.linspace(grid_x[0], grid_x[-1], n_eval, device=device)
+    Y = torch.linspace(grid_y[0], grid_y[-1], n_eval, device=device)
+    XX, YY = torch.meshgrid(X, Y, indexing="ij")
+    XY = torch.stack([XX.flatten(), YY.flatten()], dim=1)
+    u_pred = model(XY).detach().cpu().numpy().reshape(n_eval, n_eval)
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(XX.cpu().numpy(), YY.cpu().numpy(), u_pred, cmap="viridis", alpha=0.8)
+
+    if u_exact is not None:
+        u_true_vals = u_exact(XX, YY)
+        ax.plot_surface(XX.cpu().numpy(), YY.cpu().numpy(), u_true_vals, cmap="coolwarm", alpha=0.5)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("u(x,y)")
+    plt.title("2D Piecewise Linear FEM Approximation")
+    plt.show()
+
+def plot_2d_derivatives(model, n_eval=50, title="FEM Derivatives"):
+    device = model.u.device
+    grid_x, grid_y = model.grid
+
+    # create evaluation points
+    X = torch.linspace(grid_x[0], grid_x[-1], n_eval, device=device)
+    Y = torch.linspace(grid_y[0], grid_y[-1], n_eval, device=device)
+    XX, YY = torch.meshgrid(X, Y, indexing="ij")
+    XY = torch.stack([XX.flatten(), YY.flatten()], dim=1).clone().requires_grad_(True)
+
+    # evaluate model
+    u_pred = model(XY)
+    ones = torch.ones_like(u_pred)
+
+    # compute derivatives
+    du_dXY = torch.autograd.grad(u_pred, XY, grad_outputs=ones, create_graph=False)[0]  # shape (M, 2)
+    du_dx = du_dXY[:,0].reshape(n_eval, n_eval).detach().cpu().numpy()
+    du_dy = du_dXY[:,1].reshape(n_eval, n_eval).detach().cpu().numpy()
+
+    XX_np = XX.cpu().numpy()
+    YY_np = YY.cpu().numpy()
+
+    # plot du/dx
+    fig = plt.figure(figsize=(14,6))
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax1.plot_surface(XX_np, YY_np, du_dx, cmap="viridis", alpha=0.8)
+    ax1.set_title("du/dx")
+    ax1.set_xlabel("x"); ax1.set_ylabel("y")
+
+    # plot du/dy
+    ax2 = fig.add_subplot(122, projection='3d')
+    ax2.plot_surface(XX_np, YY_np, du_dy, cmap="viridis", alpha=0.8)
+    ax2.set_title("du/dy")
+    ax2.set_xlabel("x"); ax2.set_ylabel("y")
+
+    plt.suptitle(title)
+    plt.show()
