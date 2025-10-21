@@ -1,8 +1,8 @@
 import torch
 import torch.optim as optim
 
-from models import PiecewiseLinearShapeNN
-from plots import plot_fem_solution, plot_fem_derivative
+from src.models import PiecewiseLinearShapeNN
+from src.plots import plot_fem_solution, plot_fem_derivative
 
 # ----------------------------------------------------------------------
 # L² Projection using Piecewise Linear Finite Elements
@@ -41,10 +41,9 @@ for epoch in range(500):
     if epoch % 100 == 0:
         print(f"Epoch {epoch}: loss={loss.item():.6f}")
 
-# Analytical Target Function (for visualization)
+# Analytical Target Function
 exact_solution = lambda x: torch.sin(2 * torch.pi * x)
 exact_derivative_solution = lambda x: 2 * torch.pi * torch.cos(2 * torch.pi * x)
-print(model.grid)
 
 # Visualization
 plot_fem_solution(model, u_exact=exact_solution, title="L² Projection of sin(2πx)")

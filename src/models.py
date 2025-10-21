@@ -57,9 +57,6 @@ class PiecewiseLinearShapeNN(nn.Module):
         
     @property
     def u_full(self):
-        """
-        Return the full nodal displacement vector including boundary conditions.
-        """
         if self.u0_fixed is not None and self.uN_fixed is not None:
             return torch.cat([self.u0_fixed, self.u.view(-1), self.uN_fixed])
         elif self.u0_fixed is not None:

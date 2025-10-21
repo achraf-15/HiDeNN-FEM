@@ -3,13 +3,10 @@ import torch.nn as nn
 import torch
 import torch.optim as optim
 
-from models import PiecewiseLinearShapeNN2D
-from plots import plot_2d_solution, plot_2d_derivatives
+from src.models import PiecewiseLinearShapeNN2D
+from src.plots import plot_2d_solution, plot_2d_derivatives
 
 
-# =========================
-# Synthetic 2D function
-# =========================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Structured Cartesian grid
@@ -52,7 +49,7 @@ for epoch in range(5000):
     if epoch % 500 == 0:
         print(f"Epoch {epoch}: loss={loss.item():.6f}")
 
-
+# Visualization 
 exact_solution_2d = lambda X, Y: (torch.sin(2*torch.pi*X) * torch.cos(2*torch.pi*Y)).cpu().numpy()
 plot_2d_solution(model, u_exact=exact_solution_2d)
 plot_2d_derivatives(model, n_eval=50, title="FEM Derivatives")

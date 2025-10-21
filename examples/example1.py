@@ -1,9 +1,9 @@
 import torch
 import torch.optim as optim
 
-from models import PiecewiseLinearShapeNN
-from utils import gauss_legendre_points_weights
-from plots import plot_fem_solution, plot_fem_derivative
+from src.models import PiecewiseLinearShapeNN
+from src.utils import gauss_legendre_points_weights
+from src.plots import plot_fem_solution, plot_fem_derivative
 
 # ----------------------------------------------------------------------
 # Problem Definition: 1D Bar under distributed load
@@ -114,7 +114,7 @@ def du_dx_true(x, E):
     linear = constant * x / (10 * E)
     return term1 + term2 - linear
 
-# Postprocessing and Visualization
+# Visualization
 u_exact = lambda x: u_true(x, E)
 plot_fem_solution(model, u_exact=u_exact, title="FEM Solution (Displacement)")
 du_exact = lambda x: du_dx_true(x, E)
