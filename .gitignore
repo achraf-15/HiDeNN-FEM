@@ -1,0 +1,50 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# PyTorch checkpoints and models
+*.pt
+*.pth
+*.ckpt
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# Build and distribution folders
+build/
+dist/
+*.egg-info/
+
+# Output or test data
+outputs/
+runs/
+results/
+checkpoints/
+
+# Project-specific
+commands.txt
+ideas.txt
+#test.py
+test2.py
+
+# Include this file itself
+.gitignore
