@@ -4,7 +4,7 @@ import numpy as np
 
 def gauss_legendre_points_weights(n, device=None):
     """
-    Returns Gauss-Legendre quadrature points and weights on [a,b].
+    Returns Gauss-Legendre quadrature points and weights on [0,1].
     """
     xi, wi = np.polynomial.legendre.leggauss(n)
     xi = torch.tensor(xi, dtype=torch.float32, device=device)
