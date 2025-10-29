@@ -1,4 +1,5 @@
 torch
 matplotlib
 scipy
-pygmsh
+meshzoo
+gmsh
