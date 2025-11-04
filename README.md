@@ -73,8 +73,8 @@ N_I(x;W,b) = \text{ReLU}\left(\frac{-1}{x_I - x_{I-1}}\text{ReLU}(-x + x_I) + 1\
 
 For efficient computation, especially in 2D/3D meshes, the implementation uses an **element-based reference formulation** rather than global shape functions. For any input point $x$, shape functions are defined only on the element containing $x$, avoiding the need to evaluate all $n$ nodal shape functions.
 
-**Key idea**: The model input is a tuple $(x, \text{id}(x))$ consisting of:
-- Physical coordinate(s) $x$
+**Key idea**: The model input is a tuple $(x_{ref}, \text{id}(x))$ consisting of:
+- Refrence coordinate(s) 
 - Element ID containing $x$
 
 The loss function typically involves integrals:
