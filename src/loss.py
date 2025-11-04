@@ -1,7 +1,7 @@
 from typing import Callable, Optional
 import torch
 
-from utils import triangle_gauss_points, interval_gauss_points
+from .utils import triangle_gauss_points, interval_gauss_points
 
 class EnergyLoss2D:
     def __init__(
@@ -63,12 +63,12 @@ class EnergyLoss2D:
 
         # Evaluate displacement and gradients
         u_eval, detJ, grad_u = model(x_eval, elem_id)  # [M,2], [M], [M,2,2]
-        grad_u_x = grad_u[:, 0, :]
-        grad_u_y = grad_u[:, 1, :]
+        grad_u_x = grad_u[:, 0, :] # ∂u_x/∂(x,y)
+        grad_u_y = grad_u[:, 1, :] # ∂u_x/∂(x,y)
 
         # Strain components (infinitesimal)
-        eps_xx = grad_u_x[:, 0]
-        eps_yy = grad_u_y[:, 1]
+        eps_xx = grad_u_x[:, 0]  # ∂u_x/∂x
+        eps_yy = grad_u_y[:, 1]  # ∂u_y/∂y
         eps_xy = 0.5 * (grad_u_x[:, 1] + grad_u_y[:, 0])
         eps_voigt = torch.stack([eps_xx, eps_yy, 2*eps_xy], dim=1)
 

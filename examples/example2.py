@@ -1,52 +1,55 @@
 import torch
+import torch.nn as nn
+import torch
 import torch.optim as optim
 
-from src.models import PiecewiseLinearShapeNN
-from src.plots import plot_fem_solution, plot_fem_derivative
+from src.models import PiecewiseLinearShapeNN2D
+from src.plots import plot_2d_solution, plot_2d_derivatives
 
-# ----------------------------------------------------------------------
-# L² Projection using Piecewise Linear Finite Elements
-# ----------------------------------------------------------------------
-# Problem:
-# Find u_h ∈ V_h (piecewise linear FE space) such that:
-#
-#       ∫ (u_h - u_true) v dx = 0    ∀ v ∈ V_h
-#
-# Equivalent to minimizing the functional:
-#       J(u_h) = ∫ (u_h - u_true)² dx
-#
-# This represents the orthogonal projection of u_true(x)
-# onto the finite element space spanned by the model’s shape functions.
-# ----------------------------------------------------------------------
 
-# # Generate synthetic data
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-x_grid = torch.linspace(0, 1, 100).to(device)     # FE grid (nodes)        
-x_train = torch.linspace(0, 1, 1000).to(device)   # Training samples
-u_true = torch.sin(2 * torch.pi * x_train)        # Target function 
+# Structured Cartesian grid
+Nx, Ny = 25, 25
+grid_x = torch.linspace(0, 1, Nx, device=device)
+grid_y = torch.linspace(0, 1, Ny, device=device)
 
-# Model and Optimizer Setup
-model = PiecewiseLinearShapeNN(x_grid, r_adapt=True).to(device)  
+# Training points
+nx_train, ny_train = 100, 100
+M = 1000  # number of collocation points per epoch
+x_train_1d = torch.linspace(0, 1, nx_train, device=device)
+y_train_1d = torch.linspace(0, 1, ny_train, device=device)
+
+# Tensor-product grid of training points
+XX, YY = torch.meshgrid(x_train_1d, y_train_1d, indexing="ij")
+x_train = torch.stack([XX.flatten(), YY.flatten()], dim=1)  # shape (nx_train*ny_train, 2)
+
+# True values
+u_true = torch.sin(2 * torch.pi * x_train[:, 0]) * torch.cos(2 * torch.pi * x_train[:, 1])
+
+# Model & optimizer
+model = PiecewiseLinearShapeNN2D(grid_x=grid_x,
+                                 grid_y=grid_y,
+                                 boundary_mask_x=None, 
+                                 boundary_mask_y=None,
+                                 r_adapt=True,
+                            ).to(device)
 optimizer = optim.Adam(model.parameters(), lr=0.005)
 
-# L² Projection via Minimization
-# The loss corresponds to ∫ (u_h - u_true)² dx ≈ mean((pred - u_true)²) 
-for epoch in range(500):
+# L2 projection training
+for epoch in range(5000):
     optimizer.zero_grad()
-    pred = model(x_train)
-    loss = ((pred - u_true) ** 2).mean()
+    indices = torch.randint(0, x_train.shape[0], (M,), device=device)
+    x_train_batch = x_train[indices]
+    u_true_batch = u_true[indices]
+    pred = model(x_train_batch)
+    loss = ((pred - u_true_batch) ** 2).mean()
     loss.backward()
     optimizer.step()
-    if epoch % 100 == 0:
+    if epoch % 500 == 0:
         print(f"Epoch {epoch}: loss={loss.item():.6f}")
 
-# Analytical Target Function
-exact_solution = lambda x: torch.sin(2 * torch.pi * x)
-exact_derivative_solution = lambda x: 2 * torch.pi * torch.cos(2 * torch.pi * x)
-
-# Visualization
-plot_fem_solution(model, u_exact=exact_solution, title="L² Projection of sin(2πx)")
-plot_fem_derivative(model, u_exact=exact_derivative_solution, title="Derivative of L² Projection (du/dx)")
-
-
+# Visualization 
+exact_solution_2d = lambda X, Y: (torch.sin(2*torch.pi*X) * torch.cos(2*torch.pi*Y)).cpu().numpy()
+plot_2d_solution(model, u_exact=exact_solution_2d)
+plot_2d_derivatives(model, n_eval=50, title="FEM Derivatives")

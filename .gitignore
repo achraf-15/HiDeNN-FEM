@@ -43,7 +43,7 @@ checkpoints/
 # Project-specific
 commands.txt
 ideas.txt
-#test.py
+test.py
 test2.py
 
 # Include this file itself

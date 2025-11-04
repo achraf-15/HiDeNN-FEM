@@ -1,11 +1,11 @@
 import torch
 import numpy as np
 
-from model import PiecewiseLinearShapeNN2D
-from loss import EnergyLoss2D
-from mesh import generate_mesh_gmsh, generate_mesh, plot_mesh
-from plot import plot_displacement_magnitude, plot_von_mises
-from utils import test_gradients
+from src.models import PiecewiseLinearShapeNN2D
+from src.loss import EnergyLoss2D
+from src.mesh import generate_mesh_gmsh, generate_mesh, plot_mesh
+from src.plots import plot_displacement_magnitude, plot_von_mises, plot_model_mesh
+from src.utils import test_gradients
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,7 +22,7 @@ boundaries = {
     'left': 1   # Drichlet boundaries
 }
 nx, ny = 200, 100
-lc = 0.01
+lc = 0.05
 node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges = generate_mesh_gmsh(length, height, holes, boundaries, lc)
 #node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges = generate_mesh(length,height,holes,boundaries,nx,ny)
 
@@ -50,34 +50,34 @@ loss_fn = EnergyLoss2D(E=10e9, nu=0.3, length=length, height=height, device=devi
 
 #test_gradients(model, loss_fn)
 
-# ### Adam optimizer
+### Adam optimizer
 # optimizer = torch.optim.Adam([
-#     {'params': model.u_free, 'lr': 1e-6},
-#     {'params': model.node_coords_free, 'lr': 1e-7}  # Much smaller!
-# ], lr=1e-6)
+#     {'params': model.u_free, 'lr': 1e-4},
+#     {'params': model.node_coords_free, 'lr': 1e-5}  # Much smaller!
+# ], lr=1e-4)
 
-# for epoch in range(4000):
+# for epoch in range(2000):
 #     optimizer.zero_grad()
 #     loss = loss_fn(model)
 #     loss.backward()
 #     optimizer.step()
-#     if epoch % 500 == 0:
+#     if epoch % 200 == 0:
 #         print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
 
-# ### LBFGS optimizer 
-# optimizer = torch.optim.LBFGS(model.parameters())
+### LBFGS optimizer 
+optimizer = torch.optim.LBFGS(model.parameters())
 
-# for epoch in range(50):
+for epoch in range(30):
 
-#     def closure():
-#         optimizer.zero_grad()
-#         loss = loss_fn(model)
-#         loss.backward()
-#         return loss
+    def closure():
+        optimizer.zero_grad()
+        loss = loss_fn(model)
+        loss.backward()
+        return loss
 
-#     loss = optimizer.step(closure)
-#     if epoch % 5 == 0:
-#         print(f"Epoch {epoch:04d}: Loss = {loss.item():.6e}")
+    loss = optimizer.step(closure)
+    if epoch % 5 == 0:
+        print(f"Epoch {epoch:04d}: Loss = {loss.item():.6e}")
 
 
 # ### Alternating scheme
@@ -111,31 +111,31 @@ loss_fn = EnergyLoss2D(E=10e9, nu=0.3, length=length, height=height, device=devi
 #     if epoch % 50 == 0:
 #          print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
 
-### Two phase scheme
-optimizer = torch.optim.Adam([
-    {'params': model.u_free, 'lr': 1e-6},
-    {'params': model.node_coords_free, 'lr': 1e-7}  # Much smaller!
-], lr=1e-6)
-for epoch in range(1000):
-    optimizer.zero_grad()
-    loss = loss_fn(model)
-    loss.backward()
-    optimizer.step()
-    if epoch % 200 == 0:
-        print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
+# ### Two phase scheme
+# optimizer = torch.optim.Adam([
+#     {'params': model.u_free, 'lr': 1e-6},
+#     {'params': model.node_coords_free, 'lr': 1e-7}  # Much smaller!
+# ], lr=1e-6)
+# for epoch in range(1000):
+#     optimizer.zero_grad()
+#     loss = loss_fn(model)
+#     loss.backward()
+#     optimizer.step()
+#     if epoch % 200 == 0:
+#         print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
 
-optimizer = torch.optim.LBFGS(model.parameters())
-for epoch in range(40):
+# optimizer = torch.optim.LBFGS(model.parameters())
+# for epoch in range(40):
 
-    def closure():
-        optimizer.zero_grad()
-        loss = loss_fn(model)
-        loss.backward()
-        return loss
+#     def closure():
+#         optimizer.zero_grad()
+#         loss = loss_fn(model)
+#         loss.backward()
+#         return loss
 
-    loss = optimizer.step(closure)
-    if epoch % 10 == 0:
-        print(f"Epoch {epoch:04d}: Loss = {loss.item():.6e}")
+#     loss = optimizer.step(closure)
+#     if epoch % 10 == 0:
+#         print(f"Epoch {epoch:04d}: Loss = {loss.item():.6e}")
 
 
 
@@ -145,6 +145,9 @@ print("Nodal values u", u_vals.shape)
 print("Nodal values u_x:", np.mean(u_vals[:,0]), np.min(u_vals[:,0]), np.max(u_vals[:,0]))
 print("Nodal values u_y:", np.mean(u_vals[:,1]), np.min(u_vals[:,1]), np.max(u_vals[:,1]))
 
+#test_gradients(model, loss_fn)
 
+#plot_mesh(node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges)
+plot_model_mesh(model)
 plot_displacement_magnitude(model)
 plot_von_mises(model)
