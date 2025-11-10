@@ -10,7 +10,7 @@ class EnergyLoss2D:
         nu: float = 0.3,
         length: float = 1.0,
         height: float = 1.0,
-        gauss_order: int = 4,
+        gauss_order: int = 7,
         gauss_order_1d: int = 2,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32
