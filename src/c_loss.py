@@ -10,8 +10,8 @@ class EnergyLoss2D:
         nu: float = 0.3,
         length: float = 1.0,
         height: float = 1.0,
-        gauss_order: int = 7,
-        gauss_order_1d: int = 2,
+        gauss_order: int = 12,
+        gauss_order_1d: int = 3,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32
     ):
@@ -111,10 +111,6 @@ class EnergyLoss2D:
 
     # Full total potential
     def __call__(self, model, b_force=None, t_force=None) -> torch.Tensor:
-
-        model.precompute_Jaccobians()
-        model.precompute_G_patch() 
-        #model.test_conditioning()
         domain = self.domain_energy(model, b_force)
         edge = self.edge_energy(model, t_force)
         return domain - edge

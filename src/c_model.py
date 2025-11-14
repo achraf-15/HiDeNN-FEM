@@ -131,6 +131,17 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         if self.u_fixed is not None:
             u[self.dirichlet_mask] = self.u_fixed
         return u
+    
+    def freeze_coords(self, freeze: bool = True):
+        """Freeze or unfreeze node coordinates."""
+        self.node_coords_free.requires_grad_(not freeze)
+        return self  # allows chaining 
+
+    def freeze_u(self, freeze: bool = True):
+        """Freeze or unfreeze u parameters."""
+        self.u_free.requires_grad_(not freeze)
+        return self  # allows chaining 
+    # We can add a context manager to allow for the "with model.eval(): or something silimar"  
 
     @property
     def element_nodes(self):
@@ -161,44 +172,27 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             # physical coordinates
             x_physical = torch.sum(N.unsqueeze(-1) * coords_elem, dim=1)  # [M,2]
 
+            # Patch coordinates
             coords_patch, patch_mask_elem, patch_idx_elem = self.element_patch[elem_id]  # coords_patch: [M,3,n_patch,2], patch_mask_elem [M,3,n_patch], patch_idx_elem [M,3,n_patch]
-            #print("coords_patch", coords_patch.shape)
-            #print("patch_mask_elem", patch_mask_elem.shape)
-
+            # Compute radial basis
             R_vector, dR_dx = self.compute_patch_radials(x_physical, coords_patch, patch_mask_elem)
-            #print("R_vector", R_vector.shape)
-            #print("dR_dx", dR_dx.shape)
-
+            # Compute polynomial basis
             P_vector, dP_dx = self.compute_patch_polynomials(x_physical, coords_patch, patch_mask_elem)
-            #print("P_vector", P_vector.shape)
-            #print("dP_dx", dP_dx.shape)
-
+            # Compute patch weights
             W, dW_dx = self.solve_patch_weights(elem_id, R_vector, P_vector, dR_dx, dP_dx)
-            #print("W matrix", W.shape)
-            #print("dW_dx matrix", dW_dx.shape)
 
             # Gather the patch nodal u values per element:
             u_patch = self.u_full[patch_idx_elem]  # [M,3,n_patch, dim_u]
             u_patch = u_patch * patch_mask_elem[..., None]   # zero out padded nodes
-            #print("u_patch", u_patch.shape)
 
             # Step 1: sum over patch nodes
             # W: [M,3,n_patch], u_patch: [M,3,n_patch,dim_u] -> sum_j W_ij * u_j 
             Wu = torch.einsum('mij,mijd->mid', W, u_patch) #[M,3,dim_u] 
-            #print("Wu", Wu.shape)
 
             # Step 2: sum over element nodes with shape functions
             # N: [M,3], Wu: [M,3,dim_u] -> -> sum_i N_i * Wu_i 
             u_h = torch.einsum('mi,mid->md', N, Wu) # [M,dim_u]
-            #print("u_h", u_h.shape)
 
-            # # Compute 2x2 Jacobian for area / quadrature mapping using all 3 nodes
-            # v0 = coords_elem[:, 0, :]  # [M,2]
-            # v1 = coords_elem[:, 1, :]
-            # v2 = coords_elem[:, 2, :]
-            # Jmat = torch.stack([v0 - v2, v1 - v2], dim=2)  # [M,2,2]
-            # detJ = torch.linalg.det(Jmat)  # Determinent Jacobian: [M]
-            # Jinv = torch.linalg.inv(Jmat)  # Inverse Jacobian: [M, 2, 2]
             Jinv = self.Jinv[elem_id]
             detJ = self.detJ[elem_id]
 
@@ -256,7 +250,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
 
     def precompute_G_patch(self):
         elem_id = torch.arange(self.Nelems, device=self.device)
-        coords_patch, patch_mask_elem, patch_idx_elem = self.element_patch[elem_id]  # coords_patch: [Nelems,3,n_patch,2], patch_mask_elem [Nelems,3,n_patch], patch_idx_elem [Nelems,3,n_patch]
+        coords_patch, patch_mask_elem, _ = self.element_patch[elem_id]  # coords_patch: [Nelems,3,n_patch,2], patch_mask_elem [Nelems,3,n_patch], patch_idx_elem [Nelems,3,n_patch]
         
         # 2D mask for pairwise: valid if both patch entries are valid
         mask_mom_valid = patch_mask_elem.unsqueeze(-1) & patch_mask_elem.unsqueeze(-2)  # [Nelems,3,n_patch,n_patch]
@@ -312,10 +306,10 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         G[..., diag_indices, diag_indices] += eps * padded_diag_mask
 
         Ginv = torch.linalg.inv(G)  # Inverse G: [Nelems,3,n_patch+m_patch,n_patch+m_patch]
-        #print(Ginv.shape)
 
         # Save G matrix
-        self.register_buffer("G_patch", G)
+        #self.register_buffer("G_patch", G)
+        self.register_buffer("G_inv_patch", Ginv)
 
 
     def compute_patch_radials(self, x_physical: torch.Tensor, coords_patch: torch.Tensor, patch_mask_elem: torch.Tensor):
@@ -370,47 +364,28 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             torch.stack([torch.zeros_like(x_eval_nodes), 2*y_eval_nodes], dim=-1)                           # derivative of y^2
         ], dim=-2)  # [M,3,m_patch*2]
 
-        # Reshape last dimension to [m_patch, 2]
-        #dP_dx = dP_dx.view(M, three, m_patch, 2)  # [M,3,6,2]
-
         return P_vector, dP_dx
 
     def solve_patch_weights(self, elem_id: torch.Tensor,
-                            R_vector: torch.Tensor, P_vector: torch.Tensor,
-                            dR_dx: torch.Tensor, dP_dx: torch.Tensor):
+                        R_vector: torch.Tensor, P_vector: torch.Tensor,
+                        dR_dx: torch.Tensor, dP_dx: torch.Tensor):
 
-        M = R_vector.shape[0]
-        three = 3
+        # Build vector b: [M,3,n_patch+m_patch]
+        b = torch.cat([R_vector, P_vector], dim=-1)  # [M,3,n_patch+m_patch]
 
-        # --- Build vector b: [M,3,n_patch+m_patch] ---
-        b = torch.cat([R_vector, P_vector], dim=-1)
+        # Build derivative vector b: [M,3,n_patch+m_patch,2] 
+        db_dx = torch.cat([dR_dx, dP_dx], dim=-2)   # [M,3,n_patch+m_patch,2]
 
-        # --- Build derivative vector b: [M,3,n_patch+m_patch,2] ---
-        db_dx = torch.cat([dR_dx, dP_dx], dim=-2)
+        # Get precomputed inverse 
+        G_inv = self.G_inv_patch[elem_id]  # [M,3,n_patch+m_patch,n_patch+m_patch]
 
-        # --- Solve linear system G * W_tilde = b ---
-        #Build block matrix G: [Nelems,3,n_patch+m_patch, n_patch+m_patch]
-        G = self.G_patch[elem_id]
-        #print(G.shape)
+        # Multiply matrices
+        W_tilde = torch.einsum('mijk,mij->mik', G_inv, b)           # [M,3,n_patch+m_patch]
+        dW_tilde = torch.einsum('mijk,mijd->mikd', G_inv, db_dx)    # [M,3,n_patch+m_patch,2]
 
-        # We'll reshape batch dimensions to do batch solve
-        G_flat = G.view(M*three, self.n_patch+self.m_patch, self.n_patch+self.m_patch)
-        b_flat = b.view(M*three, self.n_patch+self.m_patch, 1)
-        db_flat = db_dx.view(M*three, self.n_patch+self.m_patch, 2)
-        # print("G_flat", G_flat[0].shape)
-        # print("b_flat", b_flat[0].shape)
-        # print("db_flat", db_flat[0].shape)
-
-        # Solve
-        W_tilde_flat = torch.linalg.solve(G_flat, b_flat)  # [M*3, n_patch+m_patch,1]
-        W_tilde = W_tilde_flat.view(M, three, self.n_patch+self.m_patch).contiguous()
-
-        dW_tilde_flat = torch.linalg.solve(G_flat, db_flat)  # [M*3, n_patch+m_patch,1]
-        dW_tilde = dW_tilde_flat.view(M, three, self.n_patch+self.m_patch, 2).contiguous()
-
-        # --- Extract patch weights W ---
-        W = W_tilde[..., :self.n_patch]  # [M,3,n_patch]
-        dW_dx = dW_tilde[..., :self.n_patch,:]  # [M,3,n_patch]
+        # Extract patch weights
+        W = W_tilde[..., :self.n_patch]          # [M,3,n_patch]
+        dW_dx = dW_tilde[..., :self.n_patch, :]  # [M,3,n_patch,2]
 
         return W, dW_dx
     
