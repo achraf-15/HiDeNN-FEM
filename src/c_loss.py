@@ -89,7 +89,10 @@ class EnergyLoss2D:
 
     # Neumann edge contribution
     def edge_energy(self, model, t_force: Optional[Callable[[torch.Tensor], torch.Tensor]] = None) -> torch.Tensor:
-        x_i, x_ip1 = model.edge_nodes[:]  # [N_edges,2]
+        #x_i, x_ip1 = model.edge_nodes[:]  
+        coords_edge = model.edge_nodes[:]  # [N_edges,2]
+        x_i   = coords_edge[:, 0, :]   # shape [N_edges, 2]
+        x_ip1 = coords_edge[:, 1, :]   # shape [N_edges, 2]
         N_edges = model.N_edges
 
         # Map 1D Gauss -> physical points

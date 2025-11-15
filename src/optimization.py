@@ -16,15 +16,22 @@ def exponential_warmup(epoch, total_epochs, lr_init, lr_target):
 def cosine_warmup(epoch, total_epochs, lr_init, lr_target):
     return lr_init + 0.5 * (lr_target - lr_init) * (1 - math.cos(math.pi * epoch / total_epochs))
 
+def polynomial_warmup(epoch, total_epochs, lr_init, lr_target, power=2):
+    ratio = (epoch / total_epochs) ** power
+    return lr_init + (lr_target - lr_init) * ratio
+
 def no_warmup(epoch, total_epochs, lr_init, lr_target):
     return lr_init
 
-warmup_dict = {'linear': linear_warmup, 'exponential': exponential_warmup, 'cosine':cosine_warmup, 'None': no_warmup}
+warmup_dict = {
+    'linear': linear_warmup,
+    'exponential': exponential_warmup,
+    'cosine': cosine_warmup,
+    'polynomial': polynomial_warmup,
+    'None': no_warmup
+}
 
-def no_decay(epoch, total_epochs, lr_init, lr_target):
-    return lr_init
 
-decay_dict = {'None': no_decay}
 
 
 class HybridOptimizer:
@@ -144,7 +151,7 @@ class HybridOptimizer:
 
         plt.figure(figsize=(10, 5))
         #plt.semilogy(epochs, losses, label="Loss", color='blue')
-        plt.loglog(epochs, losses, label="Loss", color='blue')
+        plt.plot(epochs, losses, label="Loss", color='blue')
 
         # Add vertical lines for events
         t = 0
