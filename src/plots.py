@@ -151,11 +151,11 @@ def plot_2d_derivatives(model, n_eval=50, title="FEM Derivatives"):
     plt.show()
 
 
-def plot_displacement_magnitude(model):
+def plot_displacement_magnitude(model, L0=1.0, U0=1.0):
     # Extract nodal data
-    coords = model.coords.cpu().detach().numpy()           # [Nnodes, 2]
+    coords = L0 * model.coords.cpu().detach().numpy()     # [Nnodes, 2] # Convert from dimensionless to physical 
     triangles = model.connectivity.cpu().detach().numpy() # [Nelems, 3]
-    u_vals = model.u_full.cpu().detach().numpy()          # [Nnodes, 2]
+    u_vals = U0 * model.values.cpu().detach().numpy()     # [Nnodes, 2] # Convert from dimensionless to physical
 
     # Compute displacement magnitude per node
     u_mag = np.linalg.norm(u_vals, axis=1)  # [Nnodes]
@@ -174,9 +174,9 @@ def plot_displacement_magnitude(model):
     plt.show()
 
 
-def plot_von_mises(model):
+def plot_von_mises(model, E=10e9, nu=0.3, L0=1.0, U0=1.0):
     # Extract data
-    coords = model.coords.cpu().detach().numpy()           # [Nnodes,2]
+    coords = L0  *model.coords.cpu().detach().numpy()     # [Nnodes,2] # Convert from dimensionless to physical
     triangles = model.connectivity.cpu().detach().numpy() # [Nelems,3]
 
     # Evaluate displacement gradients at element centroids
@@ -184,17 +184,15 @@ def plot_von_mises(model):
     xi = np.array([[1/3, 1/3]])  # centroid
     x_eval = torch.tensor(xi, dtype=model.coords.dtype, device=model.device).expand(n_elem, 2)
     elem_id = torch.arange(n_elem, device=model.device)
-    _, _, grad_u = model(x_eval, elem_id)  # [Nelems, dim_u, 2]
+    _, _, grad_u =  model(x_eval, elem_id)  # [Nelems, dim_u, 2]
 
     # Strain components (infinitesimal)
-    grad_u = grad_u.cpu().detach().numpy()
+    grad_u = U0 * grad_u.cpu().detach().numpy()  # Convert from dimensionless to physical 
     eps_xx = grad_u[:,0,0]
     eps_yy = grad_u[:,1,1]
     eps_xy = 0.5*(grad_u[:,0,1] + grad_u[:,1,0])
 
     # Plane stress von Mises stress
-    E = 10e9
-    nu = 0.3
     sigma_xx = E/(1-nu**2)*(eps_xx + nu*eps_yy)
     sigma_yy = E/(1-nu**2)*(eps_yy + nu*eps_xx)
     sigma_xy = E/(1+nu)*eps_xy
@@ -210,10 +208,10 @@ def plot_von_mises(model):
     plt.gca().set_aspect('equal')
     plt.show()
 
-def plot_model_mesh(model):
+def plot_model_mesh(model, L0=1.0):
     # convert tensors to numpy
     
-    points = model.coords.cpu().detach().numpy()
+    points = L0 * model.coords.cpu().detach().numpy() # Convert from dimensionless to physical coordinates
     cells = model.connectivity.cpu().detach().numpy()
     geom_boundary_mask = model.boundary_mask.cpu().detach().numpy()
     bc_mask = model.dirichlet_mask.cpu().detach().numpy()

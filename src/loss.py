@@ -10,8 +10,9 @@ class EnergyLoss2D:
         nu: float = 0.3,
         length: float = 1.0,
         height: float = 1.0,
-        gauss_order: int = 7,
-        gauss_order_1d: int = 2,
+        F_total: float = 100e3,
+        gauss_order: int = 12,
+        gauss_order_1d: int = 3,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32
     ):
@@ -19,17 +20,33 @@ class EnergyLoss2D:
         self.nu = nu
         self.length = length
         self.height = height
+        self.F_total = F_total
         self.gauss_order = gauss_order
         self.gauss_order_1d = gauss_order_1d
 
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
 
+        # characteristic scales
+        self.L0 = self.length                            # length scale
+        self.T0 = (self.F_total / self.L0)               # N/m (approx)
+        self.U0 = (self.T0 * self.L0) / self.E           # U0 = T0*L0/E
+        # Model coordinates/values should be converted to dimeionless as well -> u = u/U0; x = x/L0
+
+        # store scale factors to convert dimensional -> dimensionless
+        # b' = b * (L0^2) / (E * U0)
+        self._b_scale = (self.L0 ** 2) / (self.E * self.U0)
+        # t' = t * L0 / (E * U0)
+        self._t_scale = (self.L0) / (self.E * self.U0)
+
         # Plane-stress constitutive matrix
         factor = E / (1 - nu**2)
         self.C = torch.tensor([[1.0, nu, 0.0],
                                [nu, 1.0, 0.0],
                                [0.0, 0.0, (1.0-nu)/2.0]], dtype=dtype, device=self.device) * factor
+        
+        # Dimensionless constitutive matrix: C' = C / E
+        self.C_dimless = (self.C / self.E)
 
         # Precompute domain Gauss points
         self.xg, self.wg = triangle_gauss_points(order=self.gauss_order, device=self.device, dtype=self.dtype)
@@ -44,8 +61,10 @@ class EnergyLoss2D:
         # Zero body force by default
         return torch.zeros_like(x)
 
-    def uniform_edge_force(self, x: torch.Tensor, L: float = 1.0, F_total: float = 100e3) -> torch.Tensor:
+    def uniform_edge_force(self, x: torch.Tensor) -> torch.Tensor:
         # Uniform traction in +x direction
+        L = self.height
+        F_total = self.F_total
         t_x = torch.full((x.shape[0],), F_total/L, device=x.device, dtype=x.dtype)
         t_y = torch.zeros_like(t_x)
         return torch.stack([t_x, t_y], dim=1)
@@ -73,12 +92,14 @@ class EnergyLoss2D:
         eps_voigt = torch.stack([eps_xx, eps_yy, 2*eps_xy], dim=1)
 
         # Stress
-        sigma_voigt = eps_voigt @ self.C.T
+        sigma_voigt = eps_voigt @ self.C_dimless.T
         elastic_density = 0.5 * torch.sum(eps_voigt * sigma_voigt, dim=1)
 
         # Body force contribution
         b_vec = b_force(x_eval) if b_force is not None else self.uniform_body_force(x_eval)
-        body_density = torch.sum(b_vec * u_eval, dim=1)
+        # convert to dimensionless
+        b_vec_dimless= b_vec * (self._b_scale)    # [M,2] dimensionless body force
+        body_density = torch.sum(b_vec_dimless * u_eval, dim=1) # u_eval is nondimensional by model construction
 
         # Domain integration
         quad_weights = wg_flat * detJ.abs()
@@ -89,7 +110,11 @@ class EnergyLoss2D:
 
     # Neumann edge contribution
     def edge_energy(self, model, t_force: Optional[Callable[[torch.Tensor], torch.Tensor]] = None) -> torch.Tensor:
-        x_i, x_ip1 = model.nm_edges[:]  # [N_edges,2]
+        #x_i, x_ip1 = model.edge_nodes[:]  
+        coords_edge = model.edge_nodes[:]  # [N_edges,2]
+        x_i   = coords_edge[:, 0, :]   # shape [N_edges, 2]
+        x_ip1 = coords_edge[:, 1, :]   # shape [N_edges, 2]
+        # x_i, x_ip1 = model.nm_edges[:]  # [N_edges,2]
         N_edges = model.N_edges
 
         # Map 1D Gauss -> physical points
@@ -104,10 +129,12 @@ class EnergyLoss2D:
 
         # Traction
         t_edge = t_force(xq_flat) if t_force is not None else self.uniform_edge_force(xq_flat)
+        # convert to dimensionless
+        t_edge_dimless = t_edge * (self._t_scale) # [M,2] dimensionless traction force
 
         # Weighted contribution
         w_edge = wq_flat * ds
-        return torch.sum((u_edge * t_edge).sum(dim=1) * w_edge)
+        return torch.sum((t_edge_dimless * u_edge).sum(dim=1) * w_edge)
 
     # Full total potential
     def __call__(self, model, b_force=None, t_force=None) -> torch.Tensor:

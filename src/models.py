@@ -90,7 +90,7 @@ class PiecewiseLinearShapeNN(nn.Module):
         return u_per_elem
     
 
-class PiecewiseLinearShapeNN2D(nn.Module):
+class GridLinearShapeNN2D(nn.Module):
     def __init__(self,  grid_x, grid_y, boundary_mask_x=None, boundary_mask_y=None, r_adapt=False, u_fixed=None):
         super().__init__()
         # Store separate 1D grids
@@ -211,19 +211,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
 
         return u_h
     
-class NeumannEdgesWrapper:
-    def __init__(self, coords, edges):
-        self.coords = coords        # [Nnodes, 2]
-        self.edges = edges          # [N_edges, 2]
 
-    def __getitem__(self, idx):
-        # Support slicing and single index
-        x_i = self.coords[self.edges[idx, 0]]
-        x_ip1 = self.coords[self.edges[idx, 1]]
-        return x_i, x_ip1
-
-    def __len__(self):
-        return self.edges.shape[0]
     
 class ConnectivityWrapper:
     def __init__(self, coords, connectivity):
@@ -238,11 +226,10 @@ class ConnectivityWrapper:
         return self.connectivity.shape[0]
 
 
-class PiecewiseLinearShapeNN2D(nn.Module):
+class TriangularLinearShapeNN2D(nn.Module):
     def __init__(self, node_coords, connectivity, boundary_mask=None, dirichlet_mask=None, u_fixed=None, neumann_edges=None):
         super().__init__()
 
-        self.scale = 1e-5
         self.dim_u = 2
 
         self.register_buffer("initial_node_coords", node_coords.clone())   # [N,2]
@@ -271,7 +258,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         self.register_buffer("u_free_mask", u_free_mask)
 
         # nodal DOFs
-        self.u_free = nn.Parameter(self.scale*torch.randn(u_free_mask.sum().item(), self.dim_u))
+        self.u_free = nn.Parameter(torch.randn(u_free_mask.sum().item(), self.dim_u))
         if u_fixed is not None:
             u_fixed = torch.tensor(u_fixed)
             self.register_buffer("u_fixed", u_fixed)
@@ -297,7 +284,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         return coords
         
     @property
-    def u_full(self):
+    def values(self):
         u = torch.zeros(self.Nnodes, self.dim_u, device=self.device, dtype=self.dtype)
         u[self.u_free_mask] = self.u_free
         if self.u_fixed is not None:
@@ -305,19 +292,19 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         return u
 
     @property
-    def domain_elements(self):
+    def element_nodes(self):
         return ConnectivityWrapper(self.coords, self.connectivity)
     
     @property
-    def nm_edges(self):
-        return NeumannEdgesWrapper(self.coords, self.neumann_edges)
+    def edge_nodes(self):
+        return ConnectivityWrapper(self.coords, self.neumann_edges)
         
             
     def forward(self, x_eval, elem_id, edge=False):
         if not edge:
             # --- 2D triangle / domain ---
             # Gather the 3 node coordinates per element
-            coords_elem = self.domain_elements[elem_id] 
+            coords_elem = self.element_nodes[elem_id] 
             
             # x_eval is assumed in reference triangle coordinates (xi, eta)
             xi = x_eval[:, 0:1]  # [M,1]
@@ -328,7 +315,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             N = torch.cat([xi, eta, zeta], dim=1)  # [M,3]
 
             # Gather nodal u values per element: [M,3, dim(u)]
-            u_nodes = self.u_full[self.connectivity[elem_id]]  # [M,3, dim(u)]
+            u_nodes = self.values[self.connectivity[elem_id]]  # [M,3, dim(u)]
 
             u_h = torch.sum(N.unsqueeze(2) * u_nodes, dim=1)# [M, dim(u)]
 
@@ -359,14 +346,16 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         else:
             # --- 1D edge / Neumann ---
             # Get the two physical nodes of each edge
-            x_i, x_ip1 = self.nm_edges[elem_id] 
+            coords_edge = self.edge_nodes[elem_id] 
+            x_i   = coords_edge[:, 0, :]   # shape [M, 2]
+            x_ip1 = coords_edge[:, 1, :]   # shape [M, 2] 
 
             # x_eval: [M,1] in reference edge coordinates ξ ∈ [0,1]
             xi = x_eval[:, 0:1]  # [M,1]
             N = torch.cat([1.0 - xi, xi], dim=1)  # linear shape functions for 2 nodes
 
             # Gather nodal u values for edges
-            u_nodes = self.u_full[self.neumann_edges[elem_id]]         # [M,2,dim(u)]
+            u_nodes = self.values[self.neumann_edges[elem_id]]         # [M,2,dim(u)]
 
             # Interpolate displacement along edge
             u_h = torch.sum(N.unsqueeze(2) * u_nodes, dim=1)  # [M, dim(u)]

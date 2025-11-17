@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch
 import torch.optim as optim
 
-from src.models import PiecewiseLinearShapeNN2D
+from src.models import GridLinearShapeNN2D
 from src.plots import plot_2d_solution, plot_2d_derivatives
 
 
@@ -28,7 +28,7 @@ x_train = torch.stack([XX.flatten(), YY.flatten()], dim=1)  # shape (nx_train*ny
 u_true = torch.sin(2 * torch.pi * x_train[:, 0]) * torch.cos(2 * torch.pi * x_train[:, 1])
 
 # Model & optimizer
-model = PiecewiseLinearShapeNN2D(grid_x=grid_x,
+model = GridLinearShapeNN2D(grid_x=grid_x,
                                  grid_y=grid_y,
                                  boundary_mask_x=None, 
                                  boundary_mask_y=None,
@@ -37,7 +37,7 @@ model = PiecewiseLinearShapeNN2D(grid_x=grid_x,
 optimizer = optim.Adam(model.parameters(), lr=0.005)
 
 # L2 projection training
-for epoch in range(5000):
+for epoch in range(3000):
     optimizer.zero_grad()
     indices = torch.randint(0, x_train.shape[0], (M,), device=device)
     x_train_batch = x_train[indices]

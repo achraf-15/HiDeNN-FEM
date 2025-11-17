@@ -40,7 +40,6 @@ class PiecewiseLinearShapeNN2D(nn.Module):
     def __init__(self, node_coords, connectivity, patch, boundary_mask=None, dirichlet_mask=None, u_fixed=None, neumann_edges=None):
         super().__init__()
 
-        self.scale = 0#1e-7
         self.dim_u = 2
 
         self.alpha = 0.2
@@ -86,7 +85,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         self.register_buffer("u_free_mask", u_free_mask)
 
         # nodal DOFs
-        self.u_free = nn.Parameter(self.scale*torch.randn(u_free_mask.sum().item(), self.dim_u))
+        self.u_free = nn.Parameter(torch.randn(u_free_mask.sum().item(), self.dim_u))
         if u_fixed is not None:
             u_fixed = torch.tensor(u_fixed)
             self.register_buffer("u_fixed", u_fixed)
@@ -112,7 +111,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         return coords
         
     @property
-    def u_full(self):
+    def values(self):
         u = torch.zeros(self.Nnodes, self.dim_u, device=self.device, dtype=self.dtype)
         u[self.u_free_mask] = self.u_free
         if self.u_fixed is not None:
@@ -173,7 +172,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             W, dW_dx = self.solve_patch_weights(elem_id, R_vector, P_vector, dR_dx, dP_dx)
 
             # Gather the patch nodal u values per element:
-            u_patch = self.u_full[patch_idx_elem]  # [M,3,n_patch, dim_u]
+            u_patch = self.values[patch_idx_elem]  # [M,3,n_patch, dim_u]
             u_patch = u_patch * patch_mask_elem[..., None]   # zero out padded nodes
 
             # Step 1: sum over patch nodes
@@ -228,13 +227,12 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             W, _ = self.solve_patch_weights(elem_id, R_vector, P_vector, dR_dx, dP_dx, edge=edge)
 
             # Gather the patch nodal u values per element:
-            u_patch = self.u_full[patch_idx_elem]  # [M,2,n_patch, dim_u]
+            u_patch = self.values[patch_idx_elem]  # [M,2,n_patch, dim_u]
             u_patch = u_patch * patch_mask_elem[..., None]   # zero out padded nodes
 
             # Step 1: sum over patch nodes
             # W: [M,3,n_patch], u_patch: [M,2,n_patch,dim_u] -> sum_j W_ij * u_j 
             Wu = torch.einsum('mij,mijd->mid', W, u_patch) #[M,2,dim_u] 
-            # print("Wu", Wu.shape)
 
             #Step 2: sum over element nodes with shape functions
             #N: [M,2], Wu: [M,2,dim_u] -> -> sum_i N_i * Wu_i 
@@ -336,6 +334,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         G[..., diag_indices, diag_indices] += eps * padded_diag_mask
 
         Ginv = torch.linalg.inv(G)  # Inverse G: [Nelems,node_per_elem,n_patch+m_patch,n_patch+m_patch]
+        self.register_buffer("G_patch"+str(node_per_elem), G)
 
         return Ginv
 
@@ -430,7 +429,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
     def test_conditioning(self):
 
         # Compute conditioning BEFORE inversion
-        mat = self.G_patch
+        mat = self.G_patch3
         # Use SVD: cond = sigma_max / sigma_min
         cond = torch.linalg.cond(mat)  # S: [Nelems,3,n_patch+m_patch]
 

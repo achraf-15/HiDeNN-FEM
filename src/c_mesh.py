@@ -142,6 +142,9 @@ def generate_mesh_gmsh(
     bc_mask = torch.tensor(bc_mask, dtype=torch.bool)
     mn_mask = torch.tensor(mn_mask, dtype=torch.bool)
     neumann_edges = torch.tensor(neumann_edges, dtype=torch.long)
+
+    # Convert the coordinates to dimensionless and return the characteristic scale
+    dimless_scale = max(length, height)
     
     return (
         node_coords,
@@ -150,6 +153,7 @@ def generate_mesh_gmsh(
         bc_mask,
         mn_mask,
         neumann_edges,
+        dimless_scale,
     )
 
 import scipy.sparse as sp

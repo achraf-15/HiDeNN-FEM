@@ -87,7 +87,7 @@ class HybridOptimizer:
 
 
             elif phase_name == "lbfgs":
-                opt = optim.LBFGS(self.model.parameters())
+                opt = optim.LBFGS(self.model.parameters(), line_search_fn ="strong_wolfe")
             else:
                 raise ValueError(f"Unsupported optimizer: {phase}")
 
@@ -133,6 +133,7 @@ class HybridOptimizer:
 
                 if self.global_epoch % max(1, epochs // 50) == 0 or epoch == epochs-1:
                     pbar.set_postfix({"loss": f"{loss_val:.6e}"})
+                    #self.model.test_conditioning()
 
             stage_time = time.time() - stage_start
             self.events.append({
