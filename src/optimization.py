@@ -145,14 +145,19 @@ class HybridOptimizer:
 
     def plot_loss(self):
         """
-        Plot loss history with phase separation lines from events
+        Plot relative error history with phase separation lines from events
         """
-        epochs = [h["time"] for h in self.loss_history]
-        losses = [h["loss"] for h in self.loss_history]
+        epochs = np.array([h["time"] for h in self.loss_history])
+        losses = np.array([h["loss"] for h in self.loss_history])
+
+        # Compute relative error (one value shorter)
+        rel_error = np.abs((losses[1:] - losses[:-1]) / losses[1:])
+        # X-axis for relative change is shifted by one
+        rel_epochs = epochs[1:]
 
         plt.figure(figsize=(10, 5))
-        #plt.semilogy(epochs, losses, label="Loss", color='blue')
-        plt.plot(epochs, losses, label="Loss", color='blue')
+        plt.semilogy(rel_epochs, rel_error, label="Loss", color='blue')
+        #plt.plot(epochs, losses, label="Loss", color='blue')
 
         # Add vertical lines for events
         t = 0
@@ -162,8 +167,8 @@ class HybridOptimizer:
             plt.text(t, max(losses), event["desc"], rotation=90, verticalalignment='top', fontsize=8)
 
         plt.xlabel("Excution time")
-        plt.ylabel("Loss")
-        plt.title("Loss evolution over time")
+        plt.ylabel("Relative Loss")
+        plt.title("Relative Loss evolution over time")
         plt.grid(True)
-        plt.tight_layout()
+        plt.tight_layout(pad=1.5)
         plt.show()

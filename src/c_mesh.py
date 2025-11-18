@@ -1,9 +1,9 @@
 from typing import List, Tuple, Dict
-import meshzoo
 import gmsh
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.sparse as sp
 
 def generate_mesh_gmsh(
     length: float = 2.0,
@@ -156,8 +156,6 @@ def generate_mesh_gmsh(
         dimless_scale,
     )
 
-import scipy.sparse as sp
-
 def mesh_to_patch(connectivity: torch.Tensor, s: int = 1) -> Tuple[sp.csr_matrix, torch.Tensor]:
     """
     Given mesh connectivity, returns the adjacency matrix (sparse) and the patch tensor.
@@ -167,7 +165,6 @@ def mesh_to_patch(connectivity: torch.Tensor, s: int = 1) -> Tuple[sp.csr_matrix
         s: number of steps to expand the adjacency
     
     Returns:
-        A: scipy.sparse.csr_matrix adjacency matrix (num_nodes x num_nodes)
         patch: torch.LongTensor of shape (num_nodes, max_connections) containing
                indices of connected nodes (0-padded)
     """
@@ -227,7 +224,7 @@ def plot_mesh(node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, n
     
     # red Dirichlet boundary nodes
     plt.scatter(points[bc_mask, 0], points[bc_mask, 1],
-                color='red', s=15, label='Dirichlet')
+                color='red', s=15, label='Dirichlet Nodes')
     
     # purple Neumann nodes
     plt.scatter(points[mn_mask, 0], points[mn_mask, 1],
@@ -267,7 +264,7 @@ def plot_mesh_with_patches(node_coords, connectivity, geom_boundary_mask, bc_mas
     
     # red Dirichlet boundary nodes
     plt.scatter(points[bc_mask_np, 0], points[bc_mask_np, 1],
-                color='red', s=15, label='Dirichlet')
+                color='red', s=15, label='Dirichlet Nodes')
     
     # purple Neumann nodes
     plt.scatter(points[mn_mask_np, 0], points[mn_mask_np, 1],
