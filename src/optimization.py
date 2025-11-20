@@ -47,6 +47,7 @@ class HybridOptimizer:
         # Precompute geometry-dependent quantities
         self.model.precompute_Jaccobians()
         self.model.precompute_G_patch()
+        self.model.debug_matrix()
 
         # Storage for logging
         self.loss_history = []
