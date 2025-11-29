@@ -6,6 +6,8 @@ import numpy as np
 import time
 import math
 
+from src.c_plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
+
 def linear_warmup(epoch, total_epochs, lr_init, lr_target):
     return lr_init + (lr_target - lr_init) * (epoch / total_epochs)
 
@@ -34,20 +36,19 @@ warmup_dict = {
 
 
 
-class HybridOptimizer:
-    def __init__(self, model: nn.Module, loss_fn, device=None, dtype=torch.float32):
+class TestOptimizer:
+    def __init__(self, model: nn.Module, loss_fn):
 
         self.model = model
         self.loss_fn = loss_fn
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = dtype
 
         # Freeze coordinates
         self.model.freeze_coords()
         # Precompute geometry-dependent quantities
         self.model.precompute_Jaccobians()
         self.model.precompute_G_patch()
-        self.model.debug_matrix()
+        #self.model.check_inverse()
+        #self.model.gradient_check_inverse()
 
         # Storage for logging
         self.loss_history = []
@@ -134,7 +135,11 @@ class HybridOptimizer:
 
                 if self.global_epoch % max(1, epochs // 50) == 0 or epoch == epochs-1:
                     pbar.set_postfix({"loss": f"{loss_val:.6e}"})
-                    #self.model.test_conditioning()
+
+                # if self.global_epoch % max(1, epochs // 10) == 0 or epoch == epochs-1:
+                #     plot_displacement_magnitude(self.model)
+                #     plot_von_mises(self.model)
+                #     plot_von_mises_tricontourfd(self.model)
 
             stage_time = time.time() - stage_start
             self.events.append({

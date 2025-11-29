@@ -11,6 +11,7 @@ def generate_mesh_gmsh(
     holes: List[Tuple[float, float, float]] = [(0.5, 0.7, 0.12), (1.0, 0.3, 0.15), (1.4, 0.6, 0.1)],
     boundaries: Dict[str, int] = {"up": 0, "down": 0, "right": 2, "left": 1},
     lc: float = 1e-1,
+    dtype: torch.dtype = torch.float32,
 ) -> Tuple[
     torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
 ]:
@@ -136,7 +137,7 @@ def generate_mesh_gmsh(
     gmsh.finalize()
     
     # Convert to torch tensors
-    node_coords = torch.tensor(node_coords, dtype=torch.float32)
+    node_coords = torch.tensor(node_coords, dtype=dtype)
     connectivity = torch.tensor(connectivity, dtype=torch.long)
     geom_boundary_mask = torch.tensor(geom_boundary_mask, dtype=torch.bool)
     bc_mask = torch.tensor(bc_mask, dtype=torch.bool)

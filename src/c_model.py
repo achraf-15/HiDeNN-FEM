@@ -65,7 +65,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         self.register_buffer("patch_safe", patch_safe) # long
         self.register_buffer("patch_mask", patch_mask) # bool
 
-        self.m_patch = 3
+        self.m_patch = 6
         self.n_patch = self.patch_mask.shape[1]
 
         # boundary mask
@@ -87,9 +87,9 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         self.register_buffer("u_free_mask", u_free_mask)
 
         # nodal DOFs
-        self.u_free = nn.Parameter(torch.randn(u_free_mask.sum().item(), self.dim_u))
+        self.u_free = nn.Parameter(torch.randn(u_free_mask.sum().item(), self.dim_u, dtype=self.dtype))
         if u_fixed is not None:
-            u_fixed = torch.tensor(u_fixed)
+            u_fixed = torch.tensor(u_fixed, dtype=self.dtype)
             self.register_buffer("u_fixed", u_fixed)
 
         # Neumann mask
@@ -196,6 +196,11 @@ class PiecewiseLinearShapeNN2D(nn.Module):
 
             # W: [M,3,n_patch], u_patch: [M,3,n_patch,dim_u] -> sum_j W_ij * u_j 
             Wu = torch.einsum('mij,mijd->mid', W, u_patch) #[M,3,dim_u] 
+            dWu_dx = torch.einsum('mijk,mijd->midk', dW_dx, u_patch)  # [M,dim_u,2]
+
+            # # Compute RPI coefficients 
+            # Wu_, dWu_dx_ = self.compute_coefficients(elem_id, u_patch, R_vector, P_vector, dR_dx, dP_dx, edge=False) # [M,3,n_patch+m_patch]
+
 
             # N: [M,3], Wu: [M,3,dim_u] -> -> sum_i N_i * Wu_i 
             u_h = torch.einsum('mi,mid->md', N, Wu) # [M,dim_u]
@@ -203,21 +208,9 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             # First derivative term
             grad_term1 = torch.einsum('mij,mjd->mid', dN_dx, Wu).transpose(1, 2)  # [M,dim_u,2]
             # First derivative term
-            grad_term2 = torch.einsum('mijc,mijk->mck', u_patch, dW_dx)  # [M,dim_u,2]
+            grad_term2 = torch.einsum('mi,midk->mdk', N, dWu_dx)  # [M,dim_u,2]
             # grad_u: [M,2,2]  (rows=u components, cols=∂/∂x,∂/∂y)
             grad_u = grad_term1 + grad_term2  # [M,dim_u,2]
-
-            # # Compute RPI coefficients 
-            # Wu, dWu_dx = self.compute_coefficients(elem_id, u_patch, R_vector, P_vector, dR_dx, dP_dx, edge=False) # [M,3,n_patch+m_patch]
-
-            # # N: [M,3], Wu: [M,3,dim_u] -> -> sum_i N_i * Wu_i 
-            # u_h = torch.einsum('mi,mid->md', N, Wu) # [M,dim_u]
-            # # First derivative term
-            # grad_term1 = torch.einsum('mkj,mjd->mkd', dN_dx, Wu).transpose(1, 2)  # [M,dim_u,2] (mdk)
-            # # Second derivative term
-            # grad_term2 = torch.einsum('mi,midk->mdk', N, dWu_dx)  # [M,dim_u,2]
-            # # grad_u: [M,2,2]  (rows=u components, cols=∂/∂x,∂/∂y)
-            # grad_u = grad_term1 + grad_term2  # [M,dim_u,2]
 
             return u_h, detJ, grad_u
         
@@ -258,14 +251,11 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             # W: [M,3,n_patch], u_patch: [M,2,n_patch,dim_u] -> sum_j W_ij * u_j 
             Wu = torch.einsum('mij,mijd->mid', W, u_patch) #[M,2,dim_u] 
 
-            #N: [M,2], Wu: [M,2,dim_u] -> -> sum_i N_i * Wu_i 
-            u_h = torch.einsum('mi,mid->md', N, Wu) # [M,dim_u]
-
-
             # Compute RPI coefficients 
             # Wu, _ = self.compute_coefficients(elem_id, u_patch, R_vector, P_vector, dR_dx, dP_dx, edge=edge) # [M,3,n_patch+m_patch]
 
-            # N: [M,3], Wu: [M,3,dim_u] -> -> sum_i N_i * Wu_i 
+
+            #N: [M,2], Wu: [M,2,dim_u] -> -> sum_i N_i * Wu_i 
             u_h = torch.einsum('mi,mid->md', N, Wu) # [M,dim_u]
 
             return u_h, ds
@@ -296,6 +286,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         # Compute and save G_patch 
         G, valid_idx= self._compute_G(self.Nelems, node_per_elem, coords_patch, patch_mask_elem)
         self.register_buffer("G_patch"+str(node_per_elem), G)
+        self.register_buffer("valid_idx"+str(node_per_elem), valid_idx)
         self.register_buffer("patch_mask_elem"+str(node_per_elem), patch_mask_elem)
 
         # Compute and save G_inv_patch
@@ -427,6 +418,33 @@ class PiecewiseLinearShapeNN2D(nn.Module):
 
         return P_vector, dP_dx
     
+    def compute_patch_weights(self, elem_id: torch.Tensor,
+                        R_vector: torch.Tensor, P_vector: torch.Tensor,
+                        dR_dx: torch.Tensor, dP_dx: torch.Tensor,
+                        edge=False):
+
+        # Build vector b: [M,node_per_elem,n_patch+m_patch]
+        b = torch.cat([R_vector, P_vector], dim=-1)  # [M,node_per_elem,n_patch+m_patch]
+
+        # Build derivative vector b: [M,node_per_elem,n_patch+m_patch,2] 
+        db_dx = torch.cat([dR_dx, dP_dx], dim=-2)   # [M,node_per_elem,n_patch+m_patch,2]
+
+        # Get precomputed inverse 
+        if edge:
+            G_inv = self.G_inv_patch_edge[elem_id]  # [M,2,n_patch+m_patch,n_patch+m_patch]
+        else:
+            G_inv = self.G_inv_patch[elem_id]  # [M,3,n_patch+m_patch,n_patch+m_patch]
+
+        # Multiply matrices
+        W_tilde = torch.einsum('mijk,mij->mik', G_inv, b)           # [M,node_per_elem,n_patch+m_patch]
+        dW_tilde = torch.einsum('mijk,mijd->mikd', G_inv, db_dx)    # [M,node_per_elem,n_patch+m_patch,2]
+
+        # Extract patch weights
+        W = W_tilde[..., :self.n_patch]          # [M,node_per_elem,n_patch]
+        dW_dx = dW_tilde[..., :self.n_patch, :]  # [M,node_per_elem,n_patch,2]
+
+        return W, dW_dx
+    
     def compute_coefficients(self, elem_id: torch.Tensor, u_patch: torch.Tensor,
                             R_vector: torch.Tensor, P_vector: torch.Tensor,
                             dR_dx: torch.Tensor, dP_dx: torch.Tensor,
@@ -463,33 +481,6 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         dWu_dx = torch.einsum('mijk,mijd->midk', db_dx, coeffs) #[M,3,dim_u,2]
 
         return Wu, dWu_dx
-    
-    def compute_patch_weights(self, elem_id: torch.Tensor,
-                        R_vector: torch.Tensor, P_vector: torch.Tensor,
-                        dR_dx: torch.Tensor, dP_dx: torch.Tensor,
-                        edge=False):
-
-        # Build vector b: [M,node_per_elem,n_patch+m_patch]
-        b = torch.cat([R_vector, P_vector], dim=-1)  # [M,node_per_elem,n_patch+m_patch]
-
-        # Build derivative vector b: [M,node_per_elem,n_patch+m_patch,2] 
-        db_dx = torch.cat([dR_dx, dP_dx], dim=-2)   # [M,node_per_elem,n_patch+m_patch,2]
-
-        # Get precomputed inverse 
-        if edge:
-            G_inv = self.G_inv_patch_edge[elem_id]  # [M,2,n_patch+m_patch,n_patch+m_patch]
-        else:
-            G_inv = self.G_inv_patch[elem_id]  # [M,3,n_patch+m_patch,n_patch+m_patch]
-
-        # Multiply matrices
-        W_tilde = torch.einsum('mijk,mij->mik', G_inv, b)           # [M,node_per_elem,n_patch+m_patch]
-        dW_tilde = torch.einsum('mijk,mijd->mikd', G_inv, db_dx)    # [M,node_per_elem,n_patch+m_patch,2]
-
-        # Extract patch weights
-        W = W_tilde[..., :self.n_patch]          # [M,node_per_elem,n_patch]
-        dW_dx = dW_tilde[..., :self.n_patch, :]  # [M,node_per_elem,n_patch,2]
-
-        return W, dW_dx
 
     def solve_patch_weights(self, elem_id: torch.Tensor,
                         R_vector: torch.Tensor, P_vector: torch.Tensor,
@@ -558,7 +549,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
 
 
     
-    def debug_matrix(self):
+    def check_inverse(self):
 
         # Debug element patch matrix
         mat = self.G_patch3
@@ -622,6 +613,10 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         print(f" Max asymmetry:{sym_err.item():.2e}")
         print(f" eig_max : [{eig_max_tensor.min().item():.2e}; {eig_max_tensor.max().item():.2e}]")
         print(f" eig_min : [{eig_min_tensor.min().item():.2e}; {eig_min_tensor.max().item():.2e}]")
+        
+        eps = 1e-8
+        num_pos_eig = (eig_min_tensor > eps).sum().item()
+        print(f"Positive definite patches: {num_pos_eig} / {eig_min_tensor.numel()}")
         print('-----'*5)
 
         # --- Check for inversion
@@ -642,6 +637,79 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         print("Mean error =", relative_error.mean().item())
         print("Max error =", relative_error.max().item())
         print('-----'*10)    
+
+    def gradient_check_inverse(self, atol=1e-5, rtol=1e-3):
+        """
+        Compares gradients of cuda masked inverse vs torch.linalg.inv.
+        """
+
+        # ---- Clone input so both methods see same tensor ----
+        node_per_elem = 3
+        G = self.G_patch3
+        valid_idx = self.valid_idx3
+        mask =self.patch_mask_elem3
+
+        G1 = G.clone().detach().requires_grad_(True)
+        G2 = G.clone().detach().requires_grad_(True)
+
+        # ---- Your masked inverse ----
+        Ginv_custom = self.invert_masked(G1, valid_idx)
+        loss_custom = (Ginv_custom ** 2).sum()
+        loss_custom.backward()
+
+        grad_custom = G1.grad.detach().clone()
+
+        # ---- Torch inverse ----
+        grad_ref = torch.zeros_like(G2)
+        for e in range(self.Nelems):
+            for n in range(node_per_elem):
+                # Determine indices of valid entries
+                radial_idx = torch.nonzero(mask[e, n], as_tuple=True)[0]
+                poly_idx = torch.arange(self.n_patch, self.n_patch + self.m_patch, device=self.device)
+                valid_idx = torch.cat([radial_idx, poly_idx])
+                k = valid_idx.numel()
+                if k == 0:
+                    continue
+                
+                # extract valid block
+                A = G2[e, n][valid_idx][:, valid_idx]
+
+                # invert
+                Ainv = torch.linalg.inv(A)
+
+                # dummy loss (same as above)
+                loss = (Ainv ** 2).sum()
+
+                # backward for this block
+                grads = torch.autograd.grad(
+                    loss, A, retain_graph=True
+                )[0]
+
+                # scatter grads back using index_put_
+                grad_ref[e, n].index_put_(
+                    (valid_idx[:, None], valid_idx[None, :]),
+                    grads
+                )
+
+        # ---- Compare ----
+        abs_diff = (grad_custom - grad_ref).abs()
+        rel_diff = abs_diff / (grad_ref.abs() + 1e-12)
+
+        max_abs = abs_diff.max().item()
+        max_rel = rel_diff.max().item()
+        mean_abs = abs_diff.mean().item()
+        mean_rel = rel_diff.mean().item()
+
+        print("\n--- Gradient Check Results ---")
+        print(f"Max abs diff : {max_abs:e}")
+        print(f"Mean abs diff: {mean_abs:e}")
+        print(f"Max rel diff : {max_rel:e}")
+        print(f"Mean rel diff: {mean_rel:e}")
+
+        # ---- Pass / Fail ----
+        passed = torch.allclose(grad_custom, grad_ref, atol=atol, rtol=rtol)
+        print(f"Gradient match: {'✅ PASSED' if passed else '❌ FAILED'}")
+
 
 
 
