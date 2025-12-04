@@ -6,35 +6,9 @@ import numpy as np
 import time
 import math
 
+from src.test_LBFGS import FullBatchLBFGS 
+
 from src.c_plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
-
-def linear_warmup(epoch, total_epochs, lr_init, lr_target):
-    return lr_init + (lr_target - lr_init) * (epoch / total_epochs)
-
-def exponential_warmup(epoch, total_epochs, lr_init, lr_target):
-    ratio = (epoch / total_epochs)
-    return lr_init * ((lr_target / lr_init) ** ratio)
-
-def cosine_warmup(epoch, total_epochs, lr_init, lr_target):
-    return lr_init + 0.5 * (lr_target - lr_init) * (1 - math.cos(math.pi * epoch / total_epochs))
-
-def polynomial_warmup(epoch, total_epochs, lr_init, lr_target, power=2):
-    ratio = (epoch / total_epochs) ** power
-    return lr_init + (lr_target - lr_init) * ratio
-
-def no_warmup(epoch, total_epochs, lr_init, lr_target):
-    return lr_init
-
-warmup_dict = {
-    'linear': linear_warmup,
-    'exponential': exponential_warmup,
-    'cosine': cosine_warmup,
-    'polynomial': polynomial_warmup,
-    'None': no_warmup
-}
-
-
-
 
 class TestOptimizer:
     def __init__(self, model: nn.Module, loss_fn):
@@ -68,28 +42,22 @@ class TestOptimizer:
             epochs = stage.get("epochs", 50)
             # Choose optimizer
             phase_name = phase.lower()
-            if phase_name in ["adam", "rmsprop"]:
-                lr_init = stage.get("lr_init", 1e-5)
-                
-                warmup = stage.get("warmup", 'None')
-                lr_target = stage.get("lr_target", lr_init)
-                warmup_epochs = stage.get("warmup_epochs", 0)
-                assert epochs >= warmup_epochs
-
-                decay = stage.get("decay", 'None')
-                lr_decay = stage.get("lr_decay", lr_target)
-                decay_epochs = epochs - warmup_epochs
-
+            if phase_name in ["adam", "rmsprop", "sgd", 'adamw']:
+                lr = stage.get("lr", 1e-2)
                 
                 # Base optimizer
                 if phase_name == "adam":
-                    opt = optim.Adam(self.model.parameters(), lr=lr_init)
-                else:  # RMSProp
-                    opt = optim.RMSprop(self.model.parameters(), lr=lr_init)
+                    opt = optim.Adam(self.model.parameters(), lr=lr)
+                elif phase_name == "rmsprop":  # RMSProp
+                    opt = optim.RMSprop(self.model.parameters(), lr=lr)
+                elif phase_name == "sgd":
+                    opt = optim.SGD(self.model.parameters(), lr=lr)
+                else:
+                    opt = optim.AdamW(self.model.parameters(), lr=lr)
 
 
             elif phase_name == "lbfgs":
-                opt = optim.LBFGS(self.model.parameters(), line_search_fn ="strong_wolfe")
+                opt = FullBatchLBFGS (self.model.parameters(), lr=0.01, history_size=100, line_search='Wolfe', dtype=self.model.dtype, debug=True) 
             else:
                 raise ValueError(f"Unsupported optimizer: {phase}")
 
@@ -104,26 +72,25 @@ class TestOptimizer:
                 def closure_fn():
                     opt.zero_grad()
                     loss = self.loss_fn(self.model)
-                    loss.backward()
                     return loss
 
-                if phase.lower() != "lbfgs":
-
-                    if epoch < warmup_epochs:
-                        lr = warmup_dict[warmup](epoch, warmup_epochs, lr_init, lr_target)
-                    else:
-                        decay_epoch = epoch - warmup_epochs
-                        decay_epochs = decay_epochs 
-                        lr = warmup_dict[decay](decay_epoch, decay_epochs, lr_target, lr_decay)
-
-                    for g in opt.param_groups:
-                        g['lr'] = lr
+                if phase_name.lower() != "lbfgs":
                     loss = closure_fn()
+                    loss.backward()
                     opt.step()
-
                 else:
-                    # LBFGS requires a closure returning loss
-                    loss = opt.step(closure_fn)
+                    loss = closure_fn()
+                    loss.backward()
+                    options = {
+                        'closure': closure_fn,
+                        'current_loss': loss,
+                        'eps': 1e-10,    
+                        'c1': 1e-4,
+                        'c2': 0.9,        
+                        'max_ls': 20,     
+                        'ls_debug': False,
+                    }
+                    opt.step(options=options)
 
                 loss_val = loss.item() if isinstance(loss, torch.Tensor) else float(loss)
                 self.loss_history.append({
@@ -178,3 +145,4 @@ class TestOptimizer:
         plt.grid(True)
         plt.tight_layout(pad=1.5)
         plt.show()
+

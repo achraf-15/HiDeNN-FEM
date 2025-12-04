@@ -46,5 +46,10 @@ ideas.txt
 test.py
 test2.py
 
+extra_scripts/
+extra_scripts/optimization.py
+extra_scripts/torch_LBFGS.py
+extra_scripts/LBFGS.py
+
 # Include this file itself
 .gitignore
