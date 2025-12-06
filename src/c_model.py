@@ -258,6 +258,7 @@ class PiecewiseLinearShapeNN2D(nn.Module):
             u_h = torch.einsum('mi,mid->md', N, Wu) # [M,dim_u]
 
             return u_h, ds
+        
 
     def precompute_Jaccobians(self):
         elem_id = torch.arange(self.Nelems, device=self.device) 
@@ -340,14 +341,6 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         G_bottom = torch.cat([G_LL, G_LR], dim=-1) # [Nelems,node_per_elem,m_patch,n_patch+m_patch]
         G = torch.cat([G_top, G_bottom], dim=-2)   # [Nelems,node_per_elem,n_patch+m_patch,n_patch+m_patch]
 
-        # # --- Add small epsilon on diagonal for padded nodes ---
-        # eps = 1e-8
-        # # Create a mask for the upper-left diagonal: True where padded
-        # padded_diag_mask = ~patch_mask_elem  # [Nelems,node_per_elem,n_patch]
-        # diag_indices = torch.arange(self.n_patch)
-        # # Broadcast to [Nelems,3,n_patch]
-        # G[..., diag_indices, diag_indices] += eps * padded_diag_mask
-
         return G
 
     def compute_patch_radials(self, x_physical: torch.Tensor, coords_patch: torch.Tensor, patch_mask_elem: torch.Tensor):
@@ -421,17 +414,12 @@ class PiecewiseLinearShapeNN2D(nn.Module):
         dW_tilde = torch.stack([self.solve_masked(G_mat, db_dx[..., 0], mask),              # [M,node_per_elem,n_patch+m_patch,2]
                                 self.solve_masked(G_mat, db_dx[..., 1], mask)], dim=-1)
 
-        # # Solve for Weights
-        # W_tilde = torch.linalg.solve(G_mat, b)          # [M,node_per_elem,n_patch+m_patch]
-        # dW_tilde = torch.linalg.solve(G_mat, db_dx)    # [M,node_per_elem,n_patch+m_patch,2]
-
         # Extract patch weights
         W = W_tilde[..., :self.n_patch]          #  [M,node_per_elem,n_patch]
         dW_dx = dW_tilde[..., :self.n_patch, :]  #  [M,node_per_elem,n_patch,2]
 
         return W, dW_dx
     
-
     def _polynomial_basis(self, x, y):
 
         if self.m_patch == 6 :

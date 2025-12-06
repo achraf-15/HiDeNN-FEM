@@ -4,6 +4,63 @@
 #include <cmath>
 
 
+__device__ void solve_small_double(double* A, const double* b, double* x, int n)
+{
+    // In-place LDLT decomposition of symmetric matrix A
+    // A -> L D L^T
+    double L[32*32], D[32];  // n <= 32 assumed
+    int i, j, k;
+
+    // Initialize L as identity
+    for(i=0;i<n;i++)
+        for(j=0;j<n;j++)
+            L[i*n+j] = (i==j) ? 1.0 : 0.0;
+
+    // Copy diagonal to D
+    for(i=0;i<n;i++)
+        D[i] = 0.0;
+
+    // LDLT decomposition
+    for(k=0;k<n;k++){
+        // D[k] = A[k,k] - sum_{s=0}^{k-1} L[k,s]^2 * D[s]
+        double sum = 0.0;
+        for(int s=0;s<k;s++)
+            sum += L[k*n+s]*L[k*n+s]*D[s];
+        D[k] = A[k*n+k] - sum;
+
+        // Compute L[i,k] for i = k+1..n-1
+        for(i=k+1;i<n;i++){
+            double sum2 = 0.0;
+            for(int s=0;s<k;s++)
+                sum2 += L[i*n+s]*L[k*n+s]*D[s];
+            L[i*n+k] = (A[i*n+k]-sum2)/D[k];
+        }
+    }
+
+    // Forward substitution L y = b
+    double y[32];
+    for(i=0;i<n;i++){
+        double sum = 0.0;
+        for(j=0;j<i;j++)
+            sum += L[i*n+j]*y[j];
+        y[i] = b[i]-sum;
+    }
+
+    // Solve D z = y
+    double z[32];
+    for(i=0;i<n;i++)
+        z[i] = y[i]/D[i];
+
+    // Backward substitution L^T x = z
+    for(i=n-1;i>=0;i--){
+        double sum = 0.0;
+        for(j=i+1;j<n;j++)
+            sum += L[j*n+i]*x[j];
+        x[i] = z[i]-sum;
+    }
+}
+
+
 // Cholesky inversion for symmetric positive definite matrix
 // A: input k x k matrix
 // Ainv: output k x k inverse matrix
