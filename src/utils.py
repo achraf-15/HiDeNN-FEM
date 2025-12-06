@@ -44,19 +44,24 @@ def triangle_gauss_points(order, device=None, dtype=torch.float32):
     return rs, w
 
 
-def test_gradients(model, loss_fn):
-    
-    # Test u_free gradients
+def test_gradients(model: torch.nn.Module, loss_fn) -> None:
+    """
+    Utility function to test and print gradient statistics for model parameters.
+    """
+    # --- Test u_free gradients ---
     loss = loss_fn(model)
     loss.backward()
-    assert model.u_free.grad is not None
-    assert not torch.isnan(model.u_free.grad).any()
+
+    assert model.u_free.grad is not None, "u_free gradient is None!"
+    assert not torch.isnan(model.u_free.grad).any(), "u_free gradient contains NaNs!"
+
+    print("u_free gradients:")
+    print(f"  Max: {model.u_free.grad.abs().max().item():.6e}")
+    print(f"  Mean: {model.u_free.grad.abs().mean().item():.6e}\n")
     
-    # Test node_coords_free gradients
-    #assert model.node_coords_free.grad is not None
-    #assert not torch.isnan(model.node_coords_free.grad).any()
-    
-    print("Gradient magnitudes:")
-    print(model.u_free.grad)
-    print(f"u_free: {model.u_free.grad.norm()}")
-    #print(f"node_coords: {model.node_coords_free.grad.norm()}")
+    # --- Test node_coords_free gradients (currently commented out) ---
+    # assert model.node_coords_free.grad is not None, "node_coords_free gradient is None!"
+    # assert not torch.isnan(model.node_coords_free.grad).any(), "node_coords_free gradient contains NaNs!"
+    # print("node_coords_free gradients:")
+    # print(f"  Max: {model.node_coords_free.grad.abs().max().item():.6e}")
+    # print(f"  Mean: {model.node_coords_free.grad.abs().mean().item():.6e}\n")

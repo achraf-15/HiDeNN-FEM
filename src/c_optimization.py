@@ -4,7 +4,6 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 import time
-import math
 
 from src.test_LBFGS import FullBatchLBFGS 
 
@@ -21,8 +20,8 @@ class TestOptimizer:
         # Precompute geometry-dependent quantities
         self.model.precompute_Jaccobians()
         self.model.precompute_G_patch()
-        #self.model.check_inverse()
-        #self.model.gradient_check_inverse()
+        #self.model.check_stability()
+        #self.model.gradient_check_solve()
 
         # Storage for logging
         self.loss_history = []
@@ -57,7 +56,8 @@ class TestOptimizer:
 
 
             elif phase_name == "lbfgs":
-                opt = FullBatchLBFGS (self.model.parameters(), lr=0.01, history_size=100, line_search='Wolfe', dtype=self.model.dtype, debug=True) 
+                lr = stage.get("lr", 1)
+                opt = FullBatchLBFGS (self.model.parameters(), lr=lr, history_size=100, line_search='Wolfe', dtype=self.model.dtype, debug=True) 
             else:
                 raise ValueError(f"Unsupported optimizer: {phase}")
 
