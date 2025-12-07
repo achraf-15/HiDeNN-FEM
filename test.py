@@ -1,11 +1,11 @@
 import torch
 import numpy as np
 
-from src.c_model import PiecewiseLinearShapeNN2D
-from src.c_loss import EnergyLoss2D
-from src.c_mesh import generate_mesh_gmsh, mesh_to_patch, plot_mesh, plot_mesh_with_patches
-from src.c_optimization import TestOptimizer
-from src.c_plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
+from src.c_model import c_HiDeNN
+from src.loss import EnergyLoss2D
+from src.mesh import generate_mesh_gmsh, mesh_to_patch, plot_mesh, plot_mesh_with_patches
+from src.optimization import TestOptimizer
+from src.plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
 from src.utils import test_gradients
 
 
@@ -54,7 +54,7 @@ T0 = (F_total / L0)
 U0 = (T0 * L0) / E 
 
 # Model
-model = PiecewiseLinearShapeNN2D(
+model = c_HiDeNN(
     node_coords/L0, # model coordinates should be dimensionless
     connectivity, patch, 
     boundary_mask=geom_boundary_mask, 
@@ -62,6 +62,14 @@ model = PiecewiseLinearShapeNN2D(
     u_fixed=0.0,
     neumann_edges=neumann_edges,
 ).to(device)
+
+# Freeze coordinates
+model.freeze_coords()
+# Precompute geometry-dependent quantities
+model.precompute_Jaccobians()
+model.precompute_G_patch()
+#model.check_stability()
+#model.gradient_check_solve()
 
 # Loss function
 loss_fn = EnergyLoss2D(E=E, nu=nu, length=length, height=height, F_total=F_total,

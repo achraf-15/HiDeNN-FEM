@@ -3,8 +3,9 @@ import numpy as np
 
 from src.models import TriangularLinearShapeNN2D
 from src.loss import EnergyLoss2D
-from src.mesh import generate_mesh_gmsh, generate_mesh, plot_mesh
-from src.plots import plot_displacement_magnitude, plot_von_mises, plot_model_mesh
+from src.optimization import TestOptimizer
+from src.mesh import generate_mesh_gmsh, plot_mesh
+from src.plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
 from src.utils import test_gradients
 
 
@@ -20,10 +21,9 @@ boundaries = {
     'right': 2, # Neumann boundaries
     'left': 1   # Drichlet boundaries
 }
-nx, ny = 200, 100
+
 lc = 0.01
-node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges = generate_mesh_gmsh(length, height, holes, boundaries, lc)
-#node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges = generate_mesh(length,height,holes,boundaries,nx,ny)
+node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges, dimless_scale = generate_mesh_gmsh(length, height, holes, boundaries, lc)
 
 
 print("Nodes:", node_coords.shape)
@@ -33,7 +33,7 @@ print("Dirichlet BC nodes:", bc_mask.sum().item())
 print("Neumann MN nodes:", mn_mask.sum().item())
 print("Neumann edges:", neumann_edges.shape)
 
-#plot_mesh(node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges)
+plot_mesh(node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges)
 
 # --- Define Model and Loss function --- 
 E = 10e9
@@ -41,7 +41,7 @@ nu = 0.3
 F_total = 100e3
 
 #characteristic scales
-L0 = length
+L0 = dimless_scale
 T0 = (F_total / L0)            
 U0 = (T0 * L0) / E
 
@@ -54,109 +54,38 @@ model = TriangularLinearShapeNN2D(
     neumann_edges=neumann_edges,
 ).to(device)
 
+# Freeze coordinates
+model.freeze_coords()
+
+
 # Loss function
 loss_fn = EnergyLoss2D(E=E, nu=nu, length=length, height=height, F_total=F_total,
                        gauss_order=3, gauss_order_1d=2, 
                        device=device, dtype=dtype)
 
-# ## Adam optimizer
-# optimizer = torch.optim.Adam([
-#     {'params': model.u_free, 'lr': 1e-2},
-#     {'params': model.node_coords_free, 'lr': 1e-6}  # Much smaller!
-# ], lr=1e-2)
 
-# for epoch in range(5000):
-#     optimizer.zero_grad()
-#     loss = loss_fn(model)
-#     loss.backward()
-#     optimizer.step()
-#     if epoch % 500 == 0:
-#         print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
+optimizer = TestOptimizer(model, loss_fn)
 
-### LBFGS optimizer 
-model.node_coords_free.requires_grad_(False)
-optimizer = torch.optim.LBFGS(model.parameters())
+stages = [    
+    #{"optimizer": "SGD", "lr": 1e-5, "epochs": 500},
+    #{"optimizer": "Adam", "lr": 3e-1, "epochs": 500},
+    #{"optimizer": "AdamW", "lr": 3e-1, "epochs": 500},
+    #{"optimizer": "RMSprop", "lr": 3e-2, "epochs": 500},
+    {"optimizer": "LBFGS", "epochs": 500},
+] 
 
-for epoch in range(20):
+optimizer.optimize(stages)
+print("Training finished.\n")
 
-    def closure():
-        optimizer.zero_grad()
-        loss = loss_fn(model)
-        loss.backward()
-        return loss
+test_gradients(model, loss_fn)
 
-    loss = optimizer.step(closure)
-    if epoch % 5 == 0:
-        print(f"Epoch {epoch:04d}: Loss = {loss.item():.6e}")
-
-
-# ### Alternating scheme
-# optimizer = torch.optim.Adam([
-#     {'params': model.u_free, 'lr': 1e-2},
-#     {'params': model.node_coords_free, 'lr': 1e-5}  # Much smaller!
-# ], lr=1e-2)
-# # optimizer = torch.optim.LBFGS(model.parameters())
-
-# for epoch in range(500):
-#     # Step 1: Optimize displacements (freeze mesh)
-#     model.node_coords_free.requires_grad = False
-#     model.u_free.requires_grad = True
-    
-#     for _ in range(10):  # Inner iterations
-#         optimizer.zero_grad()
-#         loss = loss_fn(model)
-#         loss.backward()
-#         optimizer.step()
-    
-#     # Step 2: Optimize mesh (freeze displacements)
-#     model.u_free.requires_grad = False
-#     model.node_coords_free.requires_grad = True
-    
-#     for _ in range(5):  # Fewer iterations for mesh
-#         optimizer.zero_grad()
-#         loss = loss_fn(model) #+ 0.1 * mesh_quality_loss(model.coords, model.connectivity)
-#         loss.backward()
-#         optimizer.step()
-
-#     if epoch % 50 == 0:
-#          print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
-
-# ### Two phase scheme
-# optimizer = torch.optim.Adam([
-#     {'params': model.u_free, 'lr': 1e-6},
-#     {'params': model.node_coords_free, 'lr': 1e-7}  # Much smaller!
-# ], lr=1e-6)
-# for epoch in range(1000):
-#     optimizer.zero_grad()
-#     loss = loss_fn(model)
-#     loss.backward()
-#     optimizer.step()
-#     if epoch % 200 == 0:
-#         print(f"Epoch {epoch}: Loss = {loss.item():.6e}")
-
-# optimizer = torch.optim.LBFGS(model.parameters())
-# for epoch in range(40):
-
-#     def closure():
-#         optimizer.zero_grad()
-#         loss = loss_fn(model)
-#         loss.backward()
-#         return loss
-
-#     loss = optimizer.step(closure)
-#     if epoch % 10 == 0:
-#         print(f"Epoch {epoch:04d}: Loss = {loss.item():.6e}")
-
-
-
-print("Training finished.")
 u_vals = model.values.cpu().detach().numpy()       # [Nnodes, 2]
 print("Nodal values u", u_vals.shape)
 print("Nodal values u_x:", np.mean(u_vals[:,0]), np.min(u_vals[:,0]), np.max(u_vals[:,0]))
 print("Nodal values u_y:", np.mean(u_vals[:,1]), np.min(u_vals[:,1]), np.max(u_vals[:,1]))
 
-#test_gradients(model, loss_fn)
-
-#plot_model_mesh(model, L0=L0)
+optimizer.plot_loss()
+#plot_mesh(node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges)
 plot_displacement_magnitude(model, L0=L0, U0=U0)
 plot_von_mises(model, E=E, nu=nu, L0=L0, U0=U0)
+plot_von_mises_tricontourfd(model, E=E, nu=nu, L0=L0, U0=U0)

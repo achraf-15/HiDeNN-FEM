@@ -290,6 +290,16 @@ class TriangularLinearShapeNN2D(nn.Module):
         if self.u_fixed is not None:
             u[self.dirichlet_mask] = self.u_fixed
         return u
+    
+    def freeze_coords(self, freeze: bool = True):
+        """Freeze or unfreeze node coordinates."""
+        self.node_coords_free.requires_grad_(not freeze)
+        return self  # allows chaining 
+
+    def freeze_u(self, freeze: bool = True):
+        """Freeze or unfreeze u parameters."""
+        self.u_free.requires_grad_(not freeze)
+        return self  # allows chaining 
 
     @property
     def element_nodes(self):

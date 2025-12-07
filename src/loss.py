@@ -80,10 +80,13 @@ class EnergyLoss2D:
         elem_id = torch.arange(n_elem, device=self.device).unsqueeze(1).repeat(1, self.ng).reshape(-1)
         wg_flat = self.wg.unsqueeze(0).repeat(n_elem, 1).reshape(-1).to(self.device, dtype=self.dtype)
 
+        # # Test model gradients
+        # self.debug_grad(model, x_eval, elem_id)
+
         # Evaluate displacement and gradients
         u_eval, detJ, grad_u = model(x_eval, elem_id)  # [M,2], [M], [M,2,2]
         grad_u_x = grad_u[:, 0, :] # ∂u_x/∂(x,y)
-        grad_u_y = grad_u[:, 1, :] # ∂u_x/∂(x,y)
+        grad_u_y = grad_u[:, 1, :] # ∂u_y/∂(x,y)
 
         # Strain components (infinitesimal)
         eps_xx = grad_u_x[:, 0]  # ∂u_x/∂x
@@ -109,12 +112,10 @@ class EnergyLoss2D:
         return domain_energy - body_work
 
     # Neumann edge contribution
-    def edge_energy(self, model, t_force: Optional[Callable[[torch.Tensor], torch.Tensor]] = None) -> torch.Tensor:
-        #x_i, x_ip1 = model.edge_nodes[:]  
+    def edge_energy(self, model, t_force: Optional[Callable[[torch.Tensor], torch.Tensor]] = None) -> torch.Tensor: 
         coords_edge = model.edge_nodes[:]  # [N_edges,2]
         x_i   = coords_edge[:, 0, :]   # shape [N_edges, 2]
         x_ip1 = coords_edge[:, 1, :]   # shape [N_edges, 2]
-        # x_i, x_ip1 = model.nm_edges[:]  # [N_edges,2]
         N_edges = model.N_edges
 
         # Map 1D Gauss -> physical points
@@ -141,3 +142,96 @@ class EnergyLoss2D:
         domain = self.domain_energy(model, b_force)
         edge = self.edge_energy(model, t_force)
         return domain - edge
+    
+    def debug_grad(self, model, x_eval: torch.Tensor, elem_id: torch.Tensor, m_debug: int = 50):
+        """
+        Debug gradient computation of the c-HiDeNN model by comparing 
+        the model's analytic gradients with finite-difference and autograd estimates.
+        """
+
+        # Small subset for clarity
+        M_debug = min(m_debug, x_eval.shape[0])
+        rand_idx = torch.randperm(x_eval.shape[0], device=x_eval.device)[:M_debug]
+        x_eval_debug = x_eval[rand_idx].clone()  # do not require grad
+        elem_debug = elem_id[rand_idx]
+
+        # Forward on the debug subset
+        _, _, grad_model = model(x_eval_debug, elem_debug)  # grad_model: [M,dim_u,2]
+
+        # ========================= DEBUG GRADIENT CHECK (FINITE DIFF) =========================
+        print("================ FINITE-DIFF GRADIENT DEBUG ================")
+        # Finite differences parameters
+        eps = 1e-8 if self.dtype == torch.float64 else 1e-4
+
+        # Placeholder for finite-diff gradient: [M, dim_u, 2]
+        grad_fd_xieta  = torch.zeros_like(grad_model)
+
+        for d in range(2):  # ξ, η
+            x_perturb_plus = x_eval_debug.clone()
+            x_perturb_minus = x_eval_debug.clone()
+            x_perturb_plus[:, d] += eps
+            x_perturb_minus[:, d] -= eps
+
+            u_plus, _, _ = model(x_perturb_plus, elem_debug)
+            u_minus, _, _ = model(x_perturb_minus, elem_debug)
+
+            grad_fd_xieta [:, :, d] = (u_plus - u_minus) / (2 * eps)
+
+        # Map FD reference gradient to physical coordinates
+        # ∂u/∂x = ∂u/∂ξ * ∂ξ/∂x + ∂u/∂η * ∂η/∂x
+        Jinv_debug = model.Jinv[elem_debug]  # [M,2,2]
+        # explicit safe batching: (M,dim_u,2) @ (M,2,2) -> (M,dim_u,2)
+        grad_fd_phys = torch.einsum('mdk,mkj->mdj', grad_fd_xieta, Jinv_debug)
+
+        # Compare with model backward
+        diff = grad_fd_phys - grad_model
+
+        print("Max |grad_fd - grad_model| =", diff.abs().max().item())
+        print("Mean |grad_fd - grad_model| =", diff.abs().mean().item())
+        print("Component-wise:")
+        print("∂u_x/∂x diff =", diff[:, 0, 0].abs().max().item())
+        print("∂u_x/∂y diff =", diff[:, 0, 1].abs().max().item())
+        print("∂u_y/∂x diff =", diff[:, 1, 0].abs().max().item())
+        print("∂u_y/∂y diff =", diff[:, 1, 1].abs().max().item())
+
+        # ========================= DEBUG GRADIENT CHECK (AUTOGRAD) =========================
+        print("\n================ AUTOGRAD GRADIENT DEBUG ================")
+        x = x_eval_debug.clone().detach().double().requires_grad_(True)  # [M,2]
+        elems = elem_debug
+
+        # autograd jacobian: ∂u/∂(xi,eta)
+        from torch.autograd.functional import jacobian
+        autograd_list = []
+        for i in range(x.shape[0]):
+            def single_forward(xi):
+                out = model(xi.unsqueeze(0), elems[i:i+1])[0].squeeze(0)   # [dim_u]
+                return out
+            Ji = jacobian(single_forward, x[i], create_graph=False)      # [dim_u, 2]
+            autograd_list.append(Ji)
+        autograd_jac = torch.stack(autograd_list, dim=0)  # [M, dim_u, 2]
+
+        # map autograd (ξ,η) -> physical (x,y)
+        Jinv_debug = model.Jinv[elems].double()    # [M,2,2]
+        autograd_phys = torch.einsum('mdk,mkj->mdj', autograd_jac, Jinv_debug)  # [M,dim_u,2]
+
+        diff = autograd_phys - grad_model
+        print("Overall: max |autograd_phys - grad_model| =", (diff).abs().max().item())
+        print("Overall: mean |autograd_phys - grad_model| =", (diff).abs().mean().item())
+        print("Component-wise:")
+        print("∂u_x/∂x diff =", diff[:, 0, 0].abs().max().item())
+        print("∂u_x/∂y diff =", diff[:, 0, 1].abs().max().item())
+        print("∂u_y/∂x diff =", diff[:, 1, 0].abs().max().item())
+        print("∂u_y/∂y diff =", diff[:, 1, 1].abs().max().item())
+        # ======================= END AUTOGRAD GRADIENT DEBUG =======================
+
+        print("\n================ GRADIENT DEBUG ================")
+        diff = autograd_phys - grad_fd_phys
+        print("Overall: max |autograd_phys - grad_model| =", (diff).abs().max().item())
+        print("Overall: mean |autograd_phys - grad_model| =", (diff).abs().mean().item())
+        print("Component-wise:")
+        print("∂u_x/∂x diff =", diff[:, 0, 0].abs().max().item())
+        print("∂u_x/∂y diff =", diff[:, 0, 1].abs().max().item())
+        print("∂u_y/∂x diff =", diff[:, 1, 0].abs().max().item())
+        print("∂u_y/∂y diff =", diff[:, 1, 1].abs().max().item())
+        print("===================================================================\n")
+        # ======================= END GRADIENT DEBUG =======================

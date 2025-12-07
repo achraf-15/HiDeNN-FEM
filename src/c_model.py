@@ -37,7 +37,7 @@ class PatchWrapper:
 
 
 
-class PiecewiseLinearShapeNN2D(nn.Module):
+class c_HiDeNN(nn.Module):
     def __init__(self, node_coords, connectivity, patch, boundary_mask=None, dirichlet_mask=None, u_fixed=None, neumann_edges=None):
         super().__init__()
 

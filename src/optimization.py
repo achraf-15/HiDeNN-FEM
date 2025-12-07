@@ -5,23 +5,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 
-from src.test_LBFGS import FullBatchLBFGS 
+from src.LBFGS import FullBatchLBFGS 
 
-from src.c_plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
+from extra_scripts.c_plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
 
 class TestOptimizer:
     def __init__(self, model: nn.Module, loss_fn):
 
         self.model = model
         self.loss_fn = loss_fn
-
-        # Freeze coordinates
-        self.model.freeze_coords()
-        # Precompute geometry-dependent quantities
-        self.model.precompute_Jaccobians()
-        self.model.precompute_G_patch()
-        #self.model.check_stability()
-        #self.model.gradient_check_solve()
 
         # Storage for logging
         self.loss_history = []
@@ -72,25 +64,23 @@ class TestOptimizer:
                 def closure_fn():
                     opt.zero_grad()
                     loss = self.loss_fn(self.model)
+                    loss.backward()
                     return loss
 
                 if phase_name.lower() != "lbfgs":
                     loss = closure_fn()
-                    loss.backward()
                     opt.step()
+
                 else:
                     loss = closure_fn()
-                    loss.backward()
                     options = {
-                        'closure': closure_fn,
-                        'current_loss': loss,
                         'eps': 1e-10,    
                         'c1': 1e-4,
                         'c2': 0.9,        
                         'max_ls': 20,     
                         'ls_debug': False,
                     }
-                    opt.step(options=options)
+                    opt.step(closure_fn, options=options)
 
                 loss_val = loss.item() if isinstance(loss, torch.Tensor) else float(loss)
                 self.loss_history.append({
