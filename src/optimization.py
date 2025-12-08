@@ -6,6 +6,7 @@ import numpy as np
 import time
 
 from src.LBFGS import FullBatchLBFGS 
+from src.ConjugateGradient import ConjugateGradient 
 
 from extra_scripts.c_plots import plot_displacement_magnitude, plot_von_mises, plot_von_mises_tricontourfd
 
@@ -49,7 +50,23 @@ class TestOptimizer:
 
             elif phase_name == "lbfgs":
                 lr = stage.get("lr", 1)
-                opt = FullBatchLBFGS (self.model.parameters(), lr=lr, history_size=100, line_search='Wolfe', dtype=self.model.dtype, debug=True) 
+                opt = FullBatchLBFGS(self.model.parameters(), lr=lr, history_size=100, line_search='Wolfe', dtype=self.model.dtype, debug=True) 
+                options = { 
+                        'c1': 1e-4,
+                        'c2': 0.9,        
+                        'max_ls': 20,     
+                        'ls_debug': False,
+                    }
+
+            elif phase_name in ["cg", "conjugate gradient"]:
+                lr = stage.get("lr", 1)
+                opt = ConjugateGradient(self.model.parameters(), lr=lr, line_search='Wolfe', dtype=self.model.dtype, debug=True) 
+                options = { 
+                        'c1': 1e-4,
+                        'c2': 0.5,        
+                        'max_ls': 20,     
+                        'ls_debug': False,
+                    }
             else:
                 raise ValueError(f"Unsupported optimizer: {phase}")
 
@@ -67,20 +84,11 @@ class TestOptimizer:
                     loss.backward()
                     return loss
 
-                if phase_name.lower() != "lbfgs":
+                if not ( phase_name.lower() in ["lbfgs", "cg", "conjugate gradient"]):
                     loss = closure_fn()
                     opt.step()
-
                 else:
-                    loss = closure_fn()
-                    options = {
-                        'eps': 1e-10,    
-                        'c1': 1e-4,
-                        'c2': 0.9,        
-                        'max_ls': 20,     
-                        'ls_debug': False,
-                    }
-                    opt.step(closure_fn, options=options)
+                    loss = opt.step(closure_fn, options=options)
 
                 loss_val = loss.item() if isinstance(loss, torch.Tensor) else float(loss)
                 self.loss_history.append({

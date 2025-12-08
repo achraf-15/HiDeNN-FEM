@@ -364,15 +364,12 @@ def Strong_Wolfe(obj_func, current_params, d, t, F_k, g_k, gtd, options=None):
 
 
 
-class FullBatchLBFGS(Optimizer):
+class ConjugateGradient(Optimizer):
     """
-    Implements full-batch or deterministic L-BFGS algorithm. 
-    Performs the two-loop recursion, updating, and curvature updating 
-    in a single step.
+    Implements ConjugateGradient. 
 
     Inputs:
         lr (float): steplength or learning rate (default: 1)
-        history_size (int): update history size (default: 10)
         line_search (str): designates line search to use (default: 'Wolfe')
             Options:
                 'Wolfe': uses Armijo-Wolfe bracketing line search
@@ -381,23 +378,21 @@ class FullBatchLBFGS(Optimizer):
 
     """
 
-    def __init__(self, params, lr=1., history_size=10, line_search='Wolfe',
+    def __init__(self, params, lr=1., line_search='Wolfe',
                  dtype=torch.float, debug=False):
 
         # ensure inputs are valid
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
-        if not 0 <= history_size:
-            raise ValueError("Invalid history size: {}".format(history_size))
         #if line_search not in ['Armijo', 'Wolfe', 'None']:
         if line_search != 'Wolfe':
             raise ValueError("Invalid line search: {}".format(line_search))
 
-        defaults = dict(lr=lr, history_size=history_size, line_search=line_search, dtype=dtype, debug=debug)
-        super(FullBatchLBFGS, self).__init__(params, defaults)
+        defaults = dict(lr=lr, line_search=line_search, dtype=dtype, debug=debug)
+        super(ConjugateGradient, self).__init__(params, defaults)
 
         if len(self.param_groups) != 1:
-            raise ValueError("L-BFGS doesn't support per-parameter options "
+            raise ValueError("ConjugateGradient doesn't support per-parameter options (for now)"
                              "(parameter groups)")
 
         self._params = self.param_groups[0]['params']
@@ -405,11 +400,6 @@ class FullBatchLBFGS(Optimizer):
 
         state = self.state['global_state']
         state.setdefault('n_iter', 0)
-        state.setdefault('curv_skips', 0)
-        state.setdefault('H_diag',1)
-
-        state['old_dirs'] = []
-        state['old_stps'] = []
 
     def _numel(self):
         if self._numel_cache is None:
@@ -478,116 +468,7 @@ class FullBatchLBFGS(Optimizer):
         group = self.param_groups[0]
         group['line_search'] = line_search
         
-        return
-
-    def two_loop_recursion(self, vec):
-        """
-        Performs two-loop recursion on given vector to obtain Hv.
-
-        Inputs:
-            vec (tensor): 1-D tensor to apply two-loop recursion to
-
-        Output:
-            r (tensor): matrix-vector product Hv
-        """
-
-        group = self.param_groups[0]
-        history_size = group['history_size']
-
-        state = self.state['global_state']
-        old_dirs = state.get('old_dirs')    # change in gradients
-        old_stps = state.get('old_stps')    # change in iterates
-        H_diag = state.get('H_diag')
-
-        # compute the product of the inverse Hessian approximation and the gradient
-        num_old = len(old_dirs)
-
-        if 'rho' not in state:
-            state['rho'] = [None] * history_size
-            state['alpha'] = [None] * history_size
-        rho = state['rho']
-        alpha = state['alpha']
-
-        for i in range(num_old):
-            rho[i] = 1. / old_stps[i].dot(old_dirs[i])
-
-        q = vec
-        for i in range(num_old - 1, -1, -1):
-            alpha[i] = old_dirs[i].dot(q) * rho[i]
-            q.add_(old_stps[i], alpha= -alpha[i])
-
-        # multiply by initial Hessian 
-        # r/d is the final direction
-        r = torch.mul(q, H_diag)
-        for i in range(num_old):
-            beta = old_stps[i].dot(r) * rho[i]
-            r.add_(old_dirs[i], alpha= alpha[i]-beta)
-
-        return r
-
-    def curvature_update(self, flat_grad, eps=1e-10):
-        """
-        Performs curvature update.
-
-        Inputs:
-            flat_grad (tensor): 1-D tensor of flattened gradient for computing 
-                gradient difference with previously stored gradient
-            eps (float): constant for curvature pair rejection or damping (default: 1e-10)
-        """
-
-        assert len(self.param_groups) == 1
-
-        # load parameters
-        if(eps <= 0):
-            raise(ValueError('Invalid eps; must be positive.'))
-
-        group = self.param_groups[0]
-        history_size = group['history_size']
-        debug = group['debug']
-
-        # variables cached in state (for tracing)
-        state = self.state['global_state']
-                 
-        d = state.get('d')
-        t = state.get('t')
-        old_dirs = state.get('old_dirs')
-        old_stps = state.get('old_stps')
-        H_diag = state.get('H_diag')
-        prev_flat_grad = state.get('prev_flat_grad')
-
-        # compute y's
-        y = flat_grad.sub(prev_flat_grad)
-        s = d.mul(t)
-        ys = y.dot(s)  # y*s
-
-        # update L-BFGS matrix
-        if ys > eps  :
-
-            # updating memory
-            if len(old_dirs) == history_size:
-                # shift history by one (limited-memory)
-                old_dirs.pop(0)
-                old_stps.pop(0)
-
-            # store new direction/step
-            old_dirs.append(s)
-            old_stps.append(y)
-
-            # update scale of initial Hessian approximation
-            H_diag = ys / y.dot(y)  # (y*y)
-            
-            state['old_dirs'] = old_dirs
-            state['old_stps'] = old_stps
-            state['H_diag'] = H_diag
-
-        else:
-            # save skip
-            state['curv_skips'] += 1
-            if debug:
-                print('Curvature pair skipped due to failed criterion')
-
-
-        return  
+        return 
     
 
     def step(self, closure,  options=None):
@@ -599,7 +480,6 @@ class FullBatchLBFGS(Optimizer):
             options (dict): contains options for performing line search (default: None)
             
         General Options:
-            'eps' (float): constant for curvature pair rejection (default: 1e-10)
             'tolerance_grad' (float): optimality condition (default: 1e-6)
 
         Options for Wolfe line search:
@@ -610,7 +490,7 @@ class FullBatchLBFGS(Optimizer):
 
         """
         if closure is None:
-            raise RuntimeError("LBFGS requires a closure")
+            raise RuntimeError("ConjugateGradient requires a closure")
         
         # Make sure the closure is always called with grad enabled
         closure = torch.enable_grad()(closure)
@@ -618,11 +498,6 @@ class FullBatchLBFGS(Optimizer):
         if options is None:
             options = {}
         assert len(self.param_groups) == 1 
-
-        if 'eps' not in options.keys():
-            eps = 1e-10
-        else:
-            eps = options['eps']
 
         if 'tolerance_grad' not in options.keys():
             tolerance_grad = 1e-6
@@ -652,27 +527,33 @@ class FullBatchLBFGS(Optimizer):
             if debug:
                 print('Optimality condition achieved!')
             return orig_loss
+        
+        # # Preconditioning (Jacobi / diagonal)
+        # diag_prec = flat_grad.abs() + 1e-8
+        # g_prec = flat_grad / diag_prec
 
         # variables cached in state (for tracing)
         state = self.state['global_state']
-        #d = state.get('d')
+        prev_d = state.get('d')
         #t = state.get('t')
-        prev_flat_grad = state.get('prev_flat_grad')
-        
-        # update curvature if after 1st iteration
-        state = self.state['global_state']
-        if state['n_iter'] > 0:
-            self.curvature_update(flat_grad, eps)
+        prev_flat_grad = state.get('flat_grad')
 
-        # compute search direction
-        d = self.two_loop_recursion(-flat_grad)
-
-        # modify previous gradient
-        if prev_flat_grad is None:
+        if state['n_iter'] == 0:
             prev_flat_grad = flat_grad.clone(memory_format=torch.contiguous_format)
+            prev_d = - flat_grad.clone(memory_format=torch.contiguous_format)
+            beta = 0.0
         else:
-            prev_flat_grad.copy_(flat_grad)
+            #beta = torch.norm(flat_grad) / torch.norm(prev_flat_grad) #Fletcher–Reeves (FR)
+            #beta = torch.dot(flat_grad, flat_grad - prev_flat_grad) / (torch.dot(prev_flat_grad, prev_flat_grad)) #Polak–Ribiere (PR)
+            beta = torch.dot(flat_grad, flat_grad - prev_flat_grad) / torch.dot(prev_d, flat_grad - prev_flat_grad) #Hestenes–Stiefel (HS)
 
+        # check if beta is negative
+        if beta < 0:
+            if debug:
+                print('Beta is negative!')
+            beta = 0.0
+
+        d = -flat_grad + beta * prev_d
         # ----------------------------------
         # === Compute step length ===
 
@@ -710,7 +591,7 @@ class FullBatchLBFGS(Optimizer):
 
         # save state & return (unchanged)
         state['d'] = d
-        state['prev_flat_grad'] = prev_flat_grad
+        state['flat_grad'] = flat_grad.clone(memory_format=torch.contiguous_format)
         state['t'] = t 
 
         return orig_loss

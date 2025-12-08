@@ -23,7 +23,7 @@ boundaries = {
     'right': 2, # Neumann boundaries
     'left': 1   # Drichlet boundaries
 }
-lc = 0.032
+lc = 0.03
 
 node_coords, connectivity, geom_boundary_mask, bc_mask, mn_mask, neumann_edges, dimless_scale = generate_mesh_gmsh(length, height, holes, boundaries, lc, dtype)
 patch = mesh_to_patch(connectivity, s=2)
@@ -83,7 +83,8 @@ stages = [
     #{"optimizer": "Adam", "lr": 3e-1, "epochs": 500},
     #{"optimizer": "AdamW", "lr": 3e-1, "epochs": 500},
     #{"optimizer": "RMSprop", "lr": 3e-2, "epochs": 500},
-    {"optimizer": "LBFGS", "epochs": 200},
+    #{"optimizer": "LBFGS", "epochs": 200},
+    {"optimizer": "CG", "epochs": 150},
 ] 
 
 optimizer.optimize(stages)
